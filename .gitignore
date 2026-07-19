@@ -1,0 +1,15 @@
+.venv/
+.env
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+experiment.lock.json
+data/raw/
+data/canonical/
+data/prepared/
+results/*
+!results/.gitkeep
+*.log
+*.pid
+.DS_Store

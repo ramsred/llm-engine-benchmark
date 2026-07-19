@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools==83.0.0", "wheel==0.47.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-engine-benchmark"
+version = "0.1.0"
+description = "Neutral, reproducible long-context serving-performance benchmark for SGLang and vLLM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Benchmark project generated from the supplied design"}]
+dependencies = [
+  "aiohttp>=3.10,<4",
+  "datasets>=3.2,<5",
+  "huggingface-hub>=0.27,<2",
+  "psutil>=6,<8",
+  "PyYAML>=6,<7",
+  "tokenizers>=0.21,<1",
+  "transformers>=4.48,<6",
+]
+
+[project.scripts]
+llm-engine-benchmark = "llm_engine_benchmark.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+llm_engine_benchmark = ["default.yaml"]

@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+import csv
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from llm_engine_benchmark.report import generate_report
+
+
+class ReportTests(unittest.TestCase):
+    def _write_run(
+        self,
+        root: Path,
+        *,
+        engine: str,
+        mode: str,
+        cache_ratio: float | None,
+        repetition: int = 1,
+        scope: str | None = None,
+    ) -> Path:
+        run_dir = root / engine / mode / "c1" / f"run_{repetition:02d}"
+        run_dir.mkdir(parents=True)
+        result = {
+            "valid": True,
+            "engine": engine,
+            "cache_mode": mode,
+            "concurrency": 1,
+            "sample_count": 1,
+            "measured_wall_time_seconds": 2.0,
+            "ttft_seconds": {"p50": 0.5, "p95": 0.5},
+            "tpot_seconds": {"p50": 0.01},
+            "itl_seconds": {"p95": 0.02},
+            "e2e_seconds": {"p50": 1.0, "p95": 1.2},
+            "request_throughput_per_second": 0.5,
+            "logical_input_throughput_tokens_per_second": 60_000.0,
+            "computed_input_throughput_tokens_per_second": 10_000.0,
+            "computed_input_token_count_source": "server_usage_cache_details",
+            "protocol_unique_suffix_tokens_estimate": 20_000,
+            "server_reported_prompt_tokens_total": 120_000,
+            "server_reported_cached_prompt_tokens_total": (
+                int(120_000 * cache_ratio) if cache_ratio is not None else 0
+            ),
+            "cache_report_coverage_requests": 1 if cache_ratio is not None else 0,
+            "cache_report_coverage_fraction": 1.0 if cache_ratio is not None else 0.0,
+            "cache_hit_ratio": cache_ratio,
+            "output_throughput_tokens_per_second": 256.0,
+            "generated_output_tokens": 512,
+        }
+        (run_dir / "client_results.json").write_text(json.dumps(result), encoding="utf-8")
+        (run_dir / "run_metadata.json").write_text(
+            json.dumps(
+                {"repetition": repetition, "experiment_scope_signature": scope}
+            ),
+            encoding="utf-8",
+        )
+        timing = {
+            "status": "ok",
+            "source": "ruler",
+            "ttft_seconds": 0.5,
+            "tpot_seconds": 0.01,
+            "itl_seconds": [0.02],
+            "e2e_seconds": 1.0,
+        }
+        (run_dir / "request_timings.jsonl").write_text(
+            json.dumps(timing) + "\n", encoding="utf-8"
+        )
+        return run_dir
+
+    def test_active_experiment_filters_stale_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self._write_run(
+                root, engine="vllm", mode="cold", cache_ratio=0.0, scope="current"
+            )
+            self._write_run(
+                root,
+                engine="sglang",
+                mode="warm_shared",
+                cache_ratio=0.8,
+                scope="stale",
+            )
+            (root / "active_experiment.json").write_text(
+                json.dumps({"experiment_scope_signature": "current", "runs": [{"engine": "vllm", "mode": "cold", "concurrency": 1, "repetition": 1}]}),
+                encoding="utf-8",
+            )
+            outputs = generate_report(root)
+            with outputs["runs"].open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["engine"], "vllm")
+            status = json.loads(outputs["status"].read_text(encoding="utf-8"))
+            self.assertTrue(status["complete"])
+            self.assertEqual(status["accepted_runs"], 1)
+
+    def test_report_includes_cache_evidence_and_exact_repeat(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self._write_run(
+                root,
+                engine="vllm",
+                mode="warm_shared",
+                cache_ratio=0.8,
+            )
+            self._write_run(
+                root,
+                engine="sglang",
+                mode="exact_repeat",
+                cache_ratio=None,
+            )
+
+            outputs = generate_report(root)
+
+            with outputs["runs"].open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            warm = next(row for row in rows if row["cache_mode"] == "warm_shared")
+            self.assertEqual(warm["computed_input_source"], "server_usage_cache_details")
+            self.assertEqual(warm["cache_report_coverage_fraction"], "1.0")
+            self.assertEqual(warm["cache_hit_ratio"], "0.8")
+
+            with outputs["summary"].open(newline="", encoding="utf-8") as handle:
+                summaries = list(csv.DictReader(handle))
+            warm_summary = next(
+                row for row in summaries if row["cache_mode"] == "warm_shared"
+            )
+            self.assertEqual(warm_summary["cache_report_coverage_median"], "1.0")
+            self.assertEqual(warm_summary["cache_hit_ratio_median"], "0.8")
+
+            exact_repeat_text = outputs["exact_repeat"].read_text(encoding="utf-8")
+            self.assertIn("exact_repeat", exact_repeat_text)
+            report_text = outputs["report"].read_text(encoding="utf-8")
+            self.assertIn("does not score answer quality", report_text)
+            self.assertIn("Matrix status: **INCOMPLETE**", report_text)
+            self.assertIn("Cache hit ratio", report_text)
+            self.assertIn("server-reported prompt/cache usage details", report_text)
+
+
+if __name__ == "__main__":
+    unittest.main()

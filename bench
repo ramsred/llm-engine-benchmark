@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+# Load only simple KEY=VALUE records. Unlike `source`, this never executes shell
+# code from .env. Quotes around the complete value are optional.
+if [[ -f "$ROOT/.env" ]]; then
+  while IFS= read -r ENV_LINE || [[ -n "$ENV_LINE" ]]; do
+    [[ "$ENV_LINE" =~ ^[[:space:]]*$ || "$ENV_LINE" =~ ^[[:space:]]*# ]] && continue
+    if [[ ! "$ENV_LINE" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      echo "ERROR: Invalid .env line (expected KEY=VALUE): $ENV_LINE" >&2
+      exit 2
+    fi
+    ENV_KEY="${BASH_REMATCH[1]}"
+    ENV_VALUE="${BASH_REMATCH[2]}"
+    ENV_VALUE="${ENV_VALUE#${ENV_VALUE%%[![:space:]]*}}"
+    ENV_VALUE="${ENV_VALUE%${ENV_VALUE##*[![:space:]]}}"
+    if [[ "$ENV_VALUE" =~ ^\"(.*)\"$ || "$ENV_VALUE" =~ ^\'(.*)\'$ ]]; then
+      ENV_VALUE="${BASH_REMATCH[1]}"
+    fi
+    export "$ENV_KEY=$ENV_VALUE"
+  done < "$ROOT/.env"
+fi
+
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+VENV_DIR="${BENCH_VENV_DIR:-$ROOT/.venv}"
+LOCK_FILE="$ROOT/requirements.lock"
+
+if [[ "${BENCH_NO_BOOTSTRAP:-0}" != "1" ]]; then
+  if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+    echo "[bootstrap] Creating virtual environment at $VENV_DIR"
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
+  fi
+
+  PROJECT_HASH="$($PYTHON_BIN - <<'PY'
+from pathlib import Path
+import hashlib
+digest = hashlib.sha256()
+for name in ("pyproject.toml", "requirements.lock"):
+    digest.update(Path(name).read_bytes())
+print(digest.hexdigest())
+PY
+)"
+  STAMP="$VENV_DIR/.llm-engine-benchmark-install"
+  INSTALLED_HASH=""
+  [[ -f "$STAMP" ]] && INSTALLED_HASH="$(cat "$STAMP")"
+  if [[ "$PROJECT_HASH" != "$INSTALLED_HASH" ]]; then
+    echo "[bootstrap] Installing project dependencies"
+    "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check -r "$LOCK_FILE"
+    "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --no-deps -e .
+    printf '%s\n' "$PROJECT_HASH" > "$STAMP"
+  fi
+  PY="$VENV_DIR/bin/python"
+else
+  PY="$PYTHON_BIN"
+fi
+
+export PYTHONUNBUFFERED=1
+export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+exec "$PY" -m llm_engine_benchmark.cli "$@"
