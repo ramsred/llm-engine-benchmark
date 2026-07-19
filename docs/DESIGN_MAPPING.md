@@ -2,7 +2,7 @@
 
 | Design control | Implementation |
 |---|---|
-| Identical prompts | `data/prepared/*.jsonl` is generated once; both engines receive the same file and checksum. |
+| Identical prompts | `data/prepared/*.jsonl` is generated once; every backend receives the same file and checksum. |
 | Identical tokenizer | `experiment.lock.json` pins the GPT-OSS tokenizer commit; `validate` re-tokenizes every saved prompt with `add_special_tokens=False`. |
 | Exactly 120K input | `normalize.fit_variable_segment`, the 1,024-token instruction reserve, and full-file validation enforce exactly 120,000 tokens. |
 | Exactly 512 output | The common OpenAI request forces `max_tokens`, deterministic sampling, and `ignore_eos`; authoritative streamed server usage is required and every mismatch rejects the run. |
@@ -12,7 +12,7 @@
 | Representative partial runs | Sample limits below 100 use a deterministic task-stratified selection rather than the first manifest rows. |
 | Cold cache | Fresh Docker container per configuration and one unrelated, exactly 32-token runtime warm-up. |
 | Warm shared prefix | Ten exact 100K-token prefixes, sequential warm-up, and a 20K-token unique measured suffix. |
-| Neutral client | `client.py` sends the same async streaming request schedule to both endpoints. |
+| Neutral client | `client.py` sends the same async streaming request schedule to every endpoint. |
 | Concurrency 1/2/4 | One client semaphore and the same saved request order. |
 | Three repetitions | `orchestrator.py` builds 36 default runs. |
 | Alternating order | Repetition 1 starts SGLang first, repetition 2 vLLM first, and later repetitions are seeded/randomized and recorded. |

@@ -36,6 +36,24 @@ class OrchestratorTests(unittest.TestCase):
         second_rep_first_pair = [plan[12].engine, plan[13].engine]
         self.assertEqual(second_rep_first_pair, ["vllm", "sglang"])
 
+    def test_alternate_order_keeps_additional_backends(self) -> None:
+        options = RunOptions(
+            engines=("sglang", "vllm", "tensorrt_llm", "tensorrt_llm_triton"),
+            modes=("cold",),
+            concurrencies=(1,),
+            repetitions=2,
+            sample_limit=1,
+            run_order="alternate",
+        )
+        plan = build_run_plan(options, seed=123)
+        self.assertEqual(
+            [spec.engine for spec in plan],
+            [
+                "sglang", "vllm", "tensorrt_llm", "tensorrt_llm_triton",
+                "vllm", "sglang", "tensorrt_llm", "tensorrt_llm_triton",
+            ],
+        )
+
     def test_runtime_warmup_is_exactly_32_tokens(self) -> None:
         prompt = _build_runtime_warmup_prompt(CharTokenizer())
         self.assertEqual(len(CharTokenizer().encode(prompt)), 32)

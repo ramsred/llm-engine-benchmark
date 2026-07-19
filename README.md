@@ -1,6 +1,6 @@
-# Fair SGLang vs. vLLM Long-Context Performance Benchmark
+# Fair Multi-Backend Long-Context Performance Benchmark
 
-A reproducible, neutral benchmark harness for comparing **SGLang** and **vLLM**
+A reproducible, neutral benchmark harness for comparing **SGLang**, **vLLM**, and **TensorRT-LLM**
 serving `openai/gpt-oss-20b` on one NVIDIA GB10 / DGX Spark system. The project
 implements the supplied benchmark design rather than calling each engine's own
 benchmark generator.
@@ -20,7 +20,7 @@ The default full experiment uses:
 - concurrency **1, 2, and 4**;
 - **three repetitions**, with engine order alternated and recorded;
 - fresh, sequential Docker servers on the same machine;
-- one asynchronous OpenAI-compatible streaming client for both engines;
+- one asynchronous OpenAI-compatible streaming client for every backend;
 - server logs, commands, image digests, environment capture, Prometheus
   snapshots, GPU/CPU telemetry, per-request timings, and report tables.
 
@@ -96,7 +96,7 @@ Rebuild the report without rerunning inference:
 ## Main flags
 
 ```text
---engines both|vllm|sglang
+--engines both|vllm|sglang|tensorrt_llm|tensorrt_llm_triton
 --modes cold,warm_shared,exact_repeat
 --concurrency 1,2,4
 --repetitions 3
@@ -146,6 +146,53 @@ View the fully resolved configuration:
 ```bash
 ./bench show-config
 ```
+
+## TensorRT-LLM backends
+
+Direct TensorRT-LLM serving uses the same benchmark plan, prepared JSONL files,
+streaming client, validation, result schema, and reports:
+
+```bash
+./bench run --engines tensorrt_llm --modes cold,warm_shared
+```
+
+This starts the configured `trtllm-serve` image and pins the Hugging Face model
+and tokenizer to `experiment.lock.json`. A separate model/tokenizer revision pair,
+an unsupported KV-cache dtype, or a server that advertises a different model is
+rejected instead of being substituted.
+
+Triton integration is intentionally a distinct backend name. It requires a
+prebuilt TensorRT-LLM Triton model repository and explicit deployment metadata
+in a YAML override, because the harness cannot safely infer an engine build
+revision, precision, quantization, or context length from its directory name:
+
+```yaml
+project:
+  engines: [tensorrt_llm_triton]
+engines:
+  tensorrt_llm_triton:
+    model_repository: /absolute/path/to/triton_model_repo
+    served_model_name: tensorrt_llm_bls
+    deployment:
+      model: openai/gpt-oss-20b
+      model_revision: <exact commit from experiment.lock.json>
+      tokenizer_revision: <exact tokenizer commit from experiment.lock.json>
+      context_length: 131072
+      dtype: bfloat16
+      quantization: mxfp4
+```
+
+Run it with:
+
+```bash
+./bench run --config triton.yaml --engines tensorrt_llm_triton
+```
+
+The OpenAI adapter uses the pinned tokenizer snapshot already prepared by the
+benchmark and sends requests to `served_model_name`. Deployment metadata must
+match the active lock and benchmark configuration exactly. The legacy `both`
+shorthand remains `sglang,vllm`; use a comma-separated list to compare any
+additional backends.
 
 ## Host requirements
 

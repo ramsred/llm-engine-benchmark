@@ -11,5 +11,4 @@ data/prepared/
 results/*
 !results/.gitkeep
 *.log
-*.pid
 .DS_Store

@@ -379,7 +379,7 @@ def _execute_one_run(
 
         warmup_results = send_warmup_requests(
             base_url=server.base_url,
-            model=str(config["project"]["model"]),
+            model=server.api_model,
             prompts=warmup_records,
             tokenizer=tokenizer,
             request_extra=request_extra,
@@ -399,7 +399,7 @@ def _execute_one_run(
         try:
             client_options = ClientRunOptions(
                 base_url=server.base_url,
-                model=str(config["project"]["model"]),
+                model=server.api_model,
                 engine=spec.engine,
                 cache_mode=spec.mode,
                 concurrency=spec.concurrency,
@@ -577,7 +577,8 @@ def _engine_order(
         values = list(unique)
         random.Random(seed + repetition * 104729).shuffle(values)
         return tuple(values)
-    return tuple(name for name in preferred if name in unique)
+    ordered = tuple(name for name in preferred if name in unique)
+    return ordered + tuple(name for name in unique if name not in ordered)
 
 
 def _run_directory(results_dir: Path, spec: RunSpec) -> Path:

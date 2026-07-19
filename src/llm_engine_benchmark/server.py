@@ -11,6 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .config import SUPPORTED_ENGINES
 from .util import (
     BenchmarkError,
     atomic_write_json,
@@ -32,7 +33,7 @@ class DockerEngineServer:
         run_dir: str | Path,
         skip_image_pull: bool = False,
     ) -> None:
-        if engine not in {"vllm", "sglang"}:
+        if engine not in SUPPORTED_ENGINES:
             raise BenchmarkError(f"Unsupported engine: {engine}")
         self.engine = engine
         self.config = config
@@ -56,6 +57,10 @@ class DockerEngineServer:
     @property
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.host_port}"
+
+    @property
+    def api_model(self) -> str:
+        return str(self.engine_config.get("served_model_name") or self.config["project"]["model"])
 
     def prepare_image(self) -> str:
         if shutil.which("docker") is None:
@@ -140,6 +145,19 @@ class DockerEngineServer:
                             payload = json.loads(body.decode("utf-8"))
                         except json.JSONDecodeError:
                             payload = None
+                        data = payload.get("data") if isinstance(payload, Mapping) else None
+                        model_ids = {
+                            str(item.get("id"))
+                            for item in data or []
+                            if isinstance(item, Mapping) and item.get("id") is not None
+                        }
+                        if self.api_model not in model_ids:
+                            last_error = (
+                                f"expected model {self.api_model!r} was not advertised; "
+                                f"available models: {sorted(model_ids)}"
+                            )
+                            time.sleep(2)
+                            continue
                         atomic_write_json(
                             self.run_dir / "models_readiness.json",
                             {
@@ -205,7 +223,12 @@ class DockerEngineServer:
     def capture_runtime_versions(self) -> dict[str, Any] | None:
         if not self.started:
             return None
-        module_name = "vllm" if self.engine == "vllm" else "sglang"
+        module_name = {
+            "vllm": "vllm",
+            "sglang": "sglang",
+            "tensorrt_llm": "tensorrt_llm",
+            "tensorrt_llm_triton": "tritonserver",
+        }[self.engine]
         script = (
             "import importlib\n"
             "import json\n"
@@ -225,7 +248,7 @@ class DockerEngineServer:
             "    payload['torch_error'] = type(exc).__name__ + ': ' + str(exc)\n"
             "print(json.dumps(payload, sort_keys=True))\n"
         )
-        executable = self.server_args[0] if self.server_args else "python3"
+        executable = "python3"
         completed = subprocess.run(
             ["docker", "exec", self.container_name, executable, "-c", script],
             text=True,
@@ -342,16 +365,83 @@ class DockerEngineServer:
                     "TRITON_CACHE_DIR=/root/.triton_cache",
                 ]
             )
-        else:
+        elif self.engine == "sglang":
             command.extend(
                 [
                     "-v",
                     f"{paths['sglang_cache_dir']}:/root/.cache/sglang",
                 ]
             )
+        elif self.engine == "tensorrt_llm_triton":
+            command.extend(
+                [
+                    "-v",
+                    f"{self._triton_model_repository()}:/models:ro",
+                    "-e",
+                    "TRTLLM_ORCHESTRATOR=1",
+                ]
+            )
         command.append(self._runtime_image_reference())
         command.extend(server_args)
         return command
+
+    def _triton_model_repository(self) -> Path:
+        raw = self.engine_config.get("model_repository")
+        if not raw:
+            raise BenchmarkError(
+                "tensorrt_llm_triton requires engines.tensorrt_llm_triton."
+                "model_repository (or --triton-model-repository)"
+            )
+        repository = Path(str(raw)).expanduser().resolve()
+        if not repository.is_dir():
+            raise BenchmarkError(f"Triton model repository does not exist: {repository}")
+        return repository
+
+    def _validate_triton_deployment(self) -> None:
+        cfg = self.engine_config
+        if not cfg.get("served_model_name"):
+            raise BenchmarkError(
+                "tensorrt_llm_triton requires a non-empty served_model_name"
+            )
+        deployment = cfg.get("deployment")
+        required = (
+            "model",
+            "model_revision",
+            "tokenizer_revision",
+            "context_length",
+            "dtype",
+            "quantization",
+        )
+        if not isinstance(deployment, Mapping):
+            raise BenchmarkError(
+                "tensorrt_llm_triton requires deployment metadata declaring the "
+                "prebuilt model, revisions, context length, dtype, and quantization"
+            )
+        missing = [key for key in required if deployment.get(key) is None]
+        if missing:
+            raise BenchmarkError(
+                "Incomplete tensorrt_llm_triton deployment metadata; missing: "
+                + ", ".join(missing)
+            )
+        direct_cfg = self.config["engines"]["tensorrt_llm"]
+        expected = {
+            "model": str(self.config["project"]["model"]),
+            "model_revision": str(self.lock["model"]["commit_sha"]),
+            "tokenizer_revision": str(self.lock["model"]["tokenizer_commit_sha"]),
+            "context_length": int(self.config["project"]["context_length"]),
+            "dtype": str(direct_cfg["dtype"]),
+            "quantization": str(direct_cfg["quantization"]),
+        }
+        mismatches = [
+            f"{key}={deployment[key]!r} (expected {value!r})"
+            for key, value in expected.items()
+            if deployment[key] != value
+        ]
+        if mismatches:
+            raise BenchmarkError(
+                "Triton deployment does not match the pinned benchmark configuration: "
+                + "; ".join(mismatches)
+            )
 
     def _runtime_image_reference(self) -> str:
         """Run the exact image ID resolved before the experiment, not a mutable tag."""
@@ -404,6 +494,77 @@ class DockerEngineServer:
             skip_layers = cfg.get("kv_cache_dtype_skip_layers")
             if skip_layers:
                 args.extend(["--kv-cache-dtype-skip-layers", str(skip_layers)])
+            args.extend(str(item) for item in cfg.get("extra_args", []))
+            return args
+
+        if self.engine == "tensorrt_llm":
+            cfg = self.engine_config
+            tokenizer_revision = str(self.lock["model"]["tokenizer_commit_sha"])
+            if tokenizer_revision != revision:
+                raise BenchmarkError(
+                    "trtllm-serve exposes one --hf_revision for this model/tokenizer pair. "
+                    "Use the same pinned model and tokenizer commit."
+                )
+            kv_cache_dtype = str(cfg["kv_cache_dtype"]).lower()
+            if kv_cache_dtype not in {"auto", "fp8", "nvfp4"}:
+                raise BenchmarkError(
+                    "Unsupported TensorRT-LLM KV cache dtype: "
+                    f"{kv_cache_dtype}; expected auto, fp8, or nvfp4"
+                )
+            args = [
+                "trtllm-serve",
+                "serve",
+                model,
+                "--tokenizer",
+                model,
+                "--served_model_name",
+                model,
+                "--hf_revision",
+                revision,
+                "--backend",
+                str(cfg.get("backend", "pytorch")),
+                "--host",
+                "0.0.0.0",
+                "--port",
+                str(self.container_port),
+                "--max_seq_len",
+                context_length,
+                "--max_batch_size",
+                str(cfg["max_batch_size"]),
+                "--max_num_tokens",
+                str(cfg["max_num_tokens"]),
+                "--kv_cache_free_gpu_memory_fraction",
+                str(cfg["kv_cache_free_gpu_memory_fraction"]),
+                "--kv_cache_dtype",
+                kv_cache_dtype,
+                "--no-telemetry",
+            ]
+            if bool(project.get("trust_remote_code", False)):
+                args.append("--trust_remote_code")
+            args.extend(str(item) for item in cfg.get("extra_args", []))
+            return args
+
+        if self.engine == "tensorrt_llm_triton":
+            cfg = self.engine_config
+            self._validate_triton_deployment()
+            tokenizer_revision = str(self.lock["model"]["tokenizer_commit_sha"])
+            cache_name = model.replace("/", "--")
+            tokenizer = (
+                f"/root/.cache/huggingface/hub/models--{cache_name}/snapshots/"
+                f"{tokenizer_revision}"
+            )
+            args = [
+                "python3",
+                "/opt/tritonserver/python/openai/openai_frontend/main.py",
+                "--model-repository",
+                "/models",
+                "--tokenizer",
+                tokenizer,
+                "--host",
+                "0.0.0.0",
+                "--port",
+                str(self.container_port),
+            ]
             args.extend(str(item) for item in cfg.get("extra_args", []))
             return args
 
