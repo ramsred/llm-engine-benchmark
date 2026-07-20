@@ -124,11 +124,12 @@ Matched configuration can also be changed from the command line:
 --context-length 131072
 --shared-prefix-tokens 100000
 --warm-groups 10
---memory-fraction 0.85
+--memory-fraction 0.80
 
 --prefill-budget 8192
 --kv-cache-dtype fp8_e4m3
 --vllm-image nvcr.io/nvidia/vllm:26.06-py3
+--tensorrt-llm-image nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc21
 --sglang-image lmsysorg/sglang@sha256:00c53fe4c31bf22d7b37537f28bbdfd924c02de13cdfb4bff7378c9c34d75ab2
 --gpus all
 ```
@@ -167,7 +168,7 @@ Run the one-request cold smoke configuration first:
 ./bench run --config config/tensorrt-llm-smoke.yaml --skip-image-pull
 ```
 
-For a combined three-engine comparison, reuse matching valid SGLang and vLLM
+For a combined three-engine comparison, reuse matching valid vLLM and SGLang
 runs and add TensorRT-LLM with:
 
 ```bash
@@ -301,31 +302,25 @@ identical to the group's saved prefix—not merely similar text.
 
 The default server intent is matched as follows:
 
-| Property | vLLM | SGLang |
-|---|---|---|
-| Context | `--max-model-len 131072` | `--context-length 131072` |
-| Prefix cache | `--enable-prefix-caching` | RadixAttention/default radix cache |
-| KV cache | `--kv-cache-dtype fp8_e4m3` | `--kv-cache-dtype fp8_e4m3` |
-| Memory fraction | `--gpu-memory-utilization 0.85` | `--mem-fraction-static 0.85` |
-| Prefill intent | `--max-num-batched-tokens 8192` | `--chunked-prefill-size 8192` |
-| Chunked prefill | enabled | enabled by configured chunk size |
-| Weight quantization | `mxfp4` | `mxfp4` |
-| CUDA graphs | default/enabled | default/enabled |
-| Sampling defaults | `--generation-config vllm` plus explicit request values | `--sampling-defaults openai` plus explicit request values |
-| Usage/cache evidence | streamed usage requested | streamed usage plus `--enable-cache-report` |
-| Parallelism | one GPU | one GPU |
+| Property | vLLM | SGLang | TensorRT-LLM |
+|---|---|---|---|
+| Context | `--max-model-len 131072` | `--context-length 131072` | `--max_seq_len 131072` |
+| Prefix cache | `--enable-prefix-caching` | RadixAttention/default radix cache | default KV-block reuse |
+| KV cache | `--kv-cache-dtype fp8_e4m3` | `--kv-cache-dtype fp8_e4m3` | `--kv_cache_dtype fp8` |
+| Memory fraction | `--gpu-memory-utilization 0.80` | `--mem-fraction-static 0.80` | `--kv_cache_free_gpu_memory_fraction 0.80` |
+| Prefill intent | `--max-num-batched-tokens 8192` | `--chunked-prefill-size 8192` | `--max_num_tokens 8192` |
+| Chunked prefill | enabled | enabled by configured chunk size | `--enable_chunked_prefill` |
+| Weight quantization | `mxfp4` | `mxfp4` | `mxfp4` |
+| CUDA graphs | default/enabled | default/enabled | runtime/image dependent; not forced by harness |
+| Sampling defaults | `--generation-config vllm` plus explicit request values | `--sampling-defaults openai` plus explicit request values | explicit request values; no engine-specific default override |
+| Usage/cache evidence | streamed usage requested | streamed usage plus `--enable-cache-report` | streamed usage and cache details when exposed |
+| Parallelism | one GPU | one GPU | one GPU |
 
 The scheduler controls are matched by intent but are not mechanically identical.
 The generated report repeats this limitation and does not claim they are the
 same implementation.
 
-The vLLM launch also retains the GPT-OSS-specific sliding-window KV dtype skip
-setting from the supplied reference script. It can be removed in a YAML
-override when testing an image that does not expose that option. vLLM model-side
-generation defaults are disabled with `--generation-config vllm`, while SGLang
-uses `--sampling-defaults openai`; the neutral request still pins every common
-sampling control explicitly. SGLang metrics and cache reporting are enabled by
-default for cache evidence.
+The vLLM launch retains the GPT-OSS-specific sliding-window KV dtype skip setting from the supplied reference script. It can be removed in a YAML override when testing an image that does not expose that option. vLLM model-side generation defaults are disabled with `--generation-config vllm`, while SGLang uses `--sampling-defaults openai`. TensorRT-LLM uses the direct `trtllm-serve` backend with PyTorch execution, chunked prefill, and default KV-block reuse. The neutral request still pins every common sampling control explicitly. SGLang metrics and cache reporting are enabled by default; TensorRT-LLM cache details are recorded when its OpenAI-compatible server exposes them.
 
 ## Cache-state protocol
 
@@ -539,7 +534,7 @@ Launch it with:
 
 **NGC pull fails**  
 Run `docker login nvcr.io`, confirm the requested tag exists for your account,
-or supply `--vllm-image`. `--skip-image-pull` uses an already-present local
+or supply `--vllm-image`, `--sglang-image`, or `--tensorrt-llm-image`. `--skip-image-pull` uses an already-present local
 image and still records its local ID/digest.
 
 **A server flag is unsupported**  
@@ -562,8 +557,8 @@ of tokens. Completed files are signature-cached. Avoid `--force-prepare` unless
 model/tokenizer/data settings changed.
 
 **Port conflict**  
-Use `--vllm-port` and `--sglang-port`, or stop the process/container occupying
-8000 or 30000. `doctor` checks both ports.
+Use `--vllm-port`, `--sglang-port`, and `--tensorrt-llm-port`, or stop the process/container occupying
+8000, 30000, or 8001. `doctor` checks all selected-engine ports.
 
 ## Local verification included with the project
 

@@ -2,7 +2,7 @@ fc9737e71d1258113190b602d769a91537979af56cefe3b6bf1d763b08cece97  ./.env.example
 5ff0fbd9fe2d7b8f94f78ded88019b063456929e0e60d5a5d205f2fe5f5d0ff4  ./.gitignore
 f65bd5f8df765c5247a2808ab465c8f7cb12381c9789949f19b462e8ee6a1125  ./CITATION.cff
 1126322e2cc8d165adc4c792eeb195717de2bcc7b39be1ce77959d78e87ef685  ./LICENSE
-6ba4ded734d9d1fcb7d9ffb8d3abd94ca2318ec7d46cb09bfeb8e97c092e5354  ./README.md
+670ddfa929e2c624621ac3ce87da5fe9f2e1c5d826ea55bb343142c75e03a83c  ./README.md
 ccb0caa1942e9ca329541dd7d00eeb357a44d7403dbcfab75478006d3b47a314  ./THIRD_PARTY.md
 8f6a3e74cbf0a32e99c6949275912d074816523e8db79e76db557008c57ed18e  ./bench
 7ddc4d0bcf64d5f8bc42be909b7a1a1a959b02004106e33f82e1b9ad85b1771e  ./config/default.yaml
@@ -23,6 +23,7 @@ b8b508ae02706f1f807ef74add54aefe1f4cd488f45684e215a0241c891c269a  ./reports/exec
 a3eb564b35671d3757bc5cc5387f8eeca05f865ecc991fb5eaed003528bf6d11  ./requirements.lock
 0cac0e472eba3359aa79e9674ff11a5fd0484b9c465fc1cb774c30938edcc5d7  ./requirements.txt
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./results/.gitkeep
+7e0846d1c6654978825b9accd0500e1bc0e7701b7ba7768c1fdd121e12a4373a  ./results/README.md
 ed35c0aa5fe3ed6293c83ea5197af79add6837f187f0cb7ee9a715e45909e636  ./results/sample/example-run-metadata.json
 a35a62233b000188b3f22a1acfcf6a2f2cccdb9dfe7324a7d5870f0b8eea36f2  ./results/summaries/combined-summary.csv
 0a3c4d3e8efbdd878c7303e07516a815c187cd717066aea55043ac251e0396c4  ./results/summaries/sglang-summary.csv
