@@ -36,5 +36,11 @@ jobs:
           ./bench --help
           ./bench show-config
           ./bench run --dry-run --engines vllm,sglang,tensorrt_llm --samples 5
+      - name: Reject generated cache paths in project manifest
+        run: |
+          if grep -nE '(__pycache__/|\.py[co]$|\.pyd$|\.pytest_cache/|\.mypy_cache/|\.ruff_cache/)' PROJECT_MANIFEST.sha256; then
+            echo "Generated cache paths must not appear in PROJECT_MANIFEST.sha256" >&2
+            exit 1
+          fi
       - name: Verify project manifest
         run: sha256sum -c PROJECT_MANIFEST.sha256 --quiet

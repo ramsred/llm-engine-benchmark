@@ -35,3 +35,12 @@ logs/
 trt_engines/
 .cache/
 huggingface/
+
+# Generated Python and tooling caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
