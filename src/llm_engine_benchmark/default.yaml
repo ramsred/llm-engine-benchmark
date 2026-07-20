@@ -13,7 +13,7 @@ project:
   repetitions: 3
   concurrency: [1, 2, 4]
   cache_modes: [cold, warm_shared]
-  engines: [sglang, vllm]
+  engines: [vllm, sglang, tensorrt_llm]
   run_order: alternate
   readiness_timeout_seconds: 3600
   request_timeout_seconds: 3600

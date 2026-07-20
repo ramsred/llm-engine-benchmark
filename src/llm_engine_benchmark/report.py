@@ -350,7 +350,7 @@ def _render_markdown(
     valid_runs = sum(1 for row in runs if row["valid"])
     invalid_runs = len(runs) - valid_runs
     lines = [
-        "# SGLang vs. vLLM Long-Context Performance Benchmark Report",
+        "# Multi-Backend Long-Context Performance Benchmark Report",
         "",
         f"Generated: {utc_now()}",
         "",

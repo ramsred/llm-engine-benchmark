@@ -1,0 +1,4 @@
+status,engine,cache_mode,concurrency,ttft_p50_s,e2e_p50_s,request_throughput_rps,tpot_p50_ms_per_token,notes
+preliminary,sglang,warm_shared,1,16.00,32.50,0.0307,,one repetition from supplied design evidence
+preliminary,sglang,warm_shared,2,26.10,51.90,0.0389,,one repetition from supplied design evidence
+preliminary,sglang,warm_shared,4,46.40,95.80,0.0420,,one repetition from supplied design evidence

@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this benchmark, please cite it."
+title: "Long-Context LLM Inference Engine Benchmark"
+type: software
+authors:
+  - family-names: "Kallu"
+    given-names: "Venkata Rami Reddy"
+version: 0.1.0
+date-released: 2026-07-20
+repository-code: "https://github.com/ramsred/llm-engine-benchmark"
+license: MIT

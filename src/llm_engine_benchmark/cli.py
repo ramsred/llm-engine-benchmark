@@ -21,7 +21,7 @@ from .validate import validate_prepared_dataset
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bench",
-        description="Neutral long-context benchmark for SGLang, vLLM, and TensorRT-LLM",
+        description="Neutral long-context benchmark for vLLM, SGLang, and TensorRT-LLM",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--engines",
         default=None,
         help=(
-            "both, vllm, sglang, tensorrt_llm, or a "
+            "all, both, vllm, sglang, tensorrt_llm, or a "
             "comma-separated list; defaults to project.engines"
         ),
     )
@@ -367,6 +367,8 @@ def _validate_engine_sequence(values: Sequence[Any]) -> tuple[str, ...]:
 
 def _parse_engines(value: str) -> tuple[str, ...]:
     normalized = value.strip().lower()
+    if normalized == "all":
+        return ("vllm", "sglang", "tensorrt_llm")
     if normalized == "both":
         return ("sglang", "vllm")
     engines = tuple(_parse_csv(normalized))

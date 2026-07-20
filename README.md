@@ -1,6 +1,6 @@
-# Fair Multi-Backend Long-Context Performance Benchmark
+# Long-Context LLM Inference Engine Benchmark
 
-A reproducible, neutral benchmark harness for comparing **SGLang**, **vLLM**, and **TensorRT-LLM**
+A reproducible, neutral benchmark harness for comparing **vLLM**, **SGLang**, and **TensorRT-LLM**
 serving `openai/gpt-oss-20b` on one NVIDIA GB10 / DGX Spark system. The project
 implements the supplied benchmark design rather than calling each engine's own
 benchmark generator.
@@ -24,13 +24,17 @@ The default full experiment uses:
 - server logs, commands, image digests, environment capture, Prometheus
   snapshots, GPU/CPU telemetry, per-request timings, and report tables.
 
+## Portfolio headline
+
+The project is a production decision framework, not a speed contest. It measures TTFT, TPOT, ITL, E2E latency, throughput, cache behavior, and host telemetry with a neutral client. The cross-engine headline table in `docs/results.md` is preliminary one-repetition evidence and must not be presented as a final ranking until the three-repetition matrix is complete.
+
 ## One-command use
 
 ```bash
 unzip llm-engine-benchmark.zip
 cd llm-engine-benchmark
 ./bench run \
-  --engines both \
+  --engines all \
   --modes cold,warm_shared \
   --concurrency 1,2,4 \
   --repetitions 3
@@ -69,7 +73,7 @@ Check the host before downloading or launching containers:
 ./bench doctor
 ```
 
-Run a five-request smoke test against both engines:
+Run a five-request smoke test against all three engines:
 
 ```bash
 ./scripts/smoke_test.sh --overwrite --cooldown-seconds 5
@@ -96,7 +100,7 @@ Rebuild the report without rerunning inference:
 ## Main flags
 
 ```text
---engines both|vllm|sglang|tensorrt_llm
+--engines all|vllm|sglang|tensorrt_llm
 --modes cold,warm_shared,exact_repeat
 --concurrency 1,2,4
 --repetitions 3
@@ -343,7 +347,7 @@ For every engine, concurrency, and repetition, the harness:
 The unrelated 32-token warm-up intentionally avoids every benchmark prefix.
 It does not attempt to precompile long-context kernels, so compilation or
 autotuning triggered by the first 120K-token measured request is part of the
-observed cold behavior for both engines.
+observed cold behavior for all selected engines.
 
 ### Warm shared-prefix
 
@@ -362,7 +366,7 @@ eviction test, not a simple guaranteed-hit test.
 
 ## Neutral client and validation
 
-Both engines receive raw POST requests to `/v1/completions` with the same saved
+All selected engines receive raw POST requests to `/v1/completions` with the same saved
 prompt and common body:
 
 ```json
@@ -474,7 +478,7 @@ only when every run listed in `active_experiment.json` exists and is accepted.
 Partial reports remain usable for diagnosis but are prominently labeled incomplete.
 
 Prepared prompts are referenced by immutable checksum instead of copied into all
-36 run directories.
+54 run directories.
 
 ## Statistical reporting
 
@@ -521,7 +525,7 @@ Launch it with:
 ## Reproducibility rules
 
 - Keep `experiment.lock.json`, `active_experiment.json`, and `run_plan.json` with the result bundle.
-- Do not run SGLang and vLLM simultaneously.
+- Do not run selected engines simultaneously.
 - Do not compare runs made with different prepared prompt checksums.
 - Do not merge cold and warm distributions.
 - Preserve rejected runs; they are useful diagnostic evidence but are excluded

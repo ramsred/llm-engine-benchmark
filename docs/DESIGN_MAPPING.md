@@ -14,8 +14,8 @@
 | Warm shared prefix | Ten exact 100K-token prefixes, sequential warm-up, and a 20K-token unique measured suffix. |
 | Neutral client | `client.py` sends the same async streaming request schedule to every endpoint. |
 | Concurrency 1/2/4 | One client semaphore and the same saved request order. |
-| Three repetitions | `orchestrator.py` builds 36 default runs. |
-| Alternating order | Repetition 1 starts SGLang first, repetition 2 vLLM first, and later repetitions are seeded/randomized and recorded. |
+| Three repetitions | `orchestrator.py` builds 54 default runs (3 engines × 2 modes × 3 concurrencies × 3 repetitions). |
+| Alternating order | The configured engine order rotates by repetition under `alternate`; the actual order is recorded in run metadata. |
 | Matched sampling intent | vLLM uses `--generation-config vllm`; SGLang uses `--sampling-defaults openai`; common request values are explicit. |
 | Cache evidence | Streamed usage/cache details are recorded when exposed, SGLang cache reporting is enabled, and Prometheus/log evidence is preserved. |
 | Telemetry | `nvidia-smi dmon`, `pidstat`, and `psutil` are captured where available. |

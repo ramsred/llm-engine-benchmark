@@ -1,0 +1,4 @@
+status,engine,cache_mode,concurrency,ttft_p50_s,e2e_p50_s,request_throughput_rps,tpot_p50_ms_per_token,notes
+preliminary,vllm,warm_shared,1,22.60,35.40,0.0282,,one repetition from supplied design evidence
+preliminary,vllm,warm_shared,2,36.20,64.30,0.0315,,one repetition from supplied design evidence
+preliminary,vllm,warm_shared,4,59.70,116.30,0.0345,,one repetition from supplied design evidence

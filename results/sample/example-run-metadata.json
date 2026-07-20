@@ -1,0 +1,13 @@
+{
+  "status": "preliminary",
+  "engine": "tensorrt_llm",
+  "cache_mode": "warm_shared",
+  "concurrency": 4,
+  "input_tokens": 120000,
+  "output_tokens": 512,
+  "repetitions": 1,
+  "hardware": "NVIDIA GB10",
+  "model": "openai/gpt-oss-20b",
+  "cache_hit_ratio": 0.83338,
+  "note": "Representative portfolio evidence; not the final repeated-run matrix."
+}
