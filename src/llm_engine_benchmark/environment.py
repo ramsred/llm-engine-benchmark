@@ -29,7 +29,7 @@ def run_doctor(config: Mapping[str, Any], *, as_json: bool = False) -> tuple[dic
     checks.append(_command_check("pidstat", ["pidstat", "-V"], critical=False))
     checks.append(_command_check("git", ["git", "--version"], critical=False))
 
-    for engine in ("vllm", "sglang"):
+    for engine in config["project"]["engines"]:
         port = int(config["engines"][engine]["host_port"])
         available, detail = _port_available(port)
         checks.append(_check(f"port_{port}_{engine}", available, detail, critical=True))

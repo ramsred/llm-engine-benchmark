@@ -12,6 +12,7 @@ projects and record immutable revisions in `experiment.lock.json`.
 - GPT-OSS-20B: https://huggingface.co/openai/gpt-oss-20b
 - vLLM: https://github.com/vllm-project/vllm
 - SGLang: https://github.com/sgl-project/sglang
+- TensorRT-LLM: https://github.com/NVIDIA/TensorRT-LLM
 
 Review each upstream project's current license and terms before use. Container
 images and model/dataset downloads are governed by their own terms, not this

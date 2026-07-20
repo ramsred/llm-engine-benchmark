@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llm-engine-benchmark"
 version = "0.1.0"
-description = "Neutral, reproducible long-context serving-performance benchmark for SGLang and vLLM"
+description = "Neutral, reproducible long-context serving benchmark for SGLang, vLLM, and TensorRT-LLM"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}

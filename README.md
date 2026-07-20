@@ -1,6 +1,6 @@
-# Fair SGLang vs. vLLM Long-Context Performance Benchmark
+# Fair Multi-Backend Long-Context Performance Benchmark
 
-A reproducible, neutral benchmark harness for comparing **SGLang** and **vLLM**
+A reproducible, neutral benchmark harness for comparing **SGLang**, **vLLM**, and **TensorRT-LLM**
 serving `openai/gpt-oss-20b` on one NVIDIA GB10 / DGX Spark system. The project
 implements the supplied benchmark design rather than calling each engine's own
 benchmark generator.
@@ -20,7 +20,7 @@ The default full experiment uses:
 - concurrency **1, 2, and 4**;
 - **three repetitions**, with engine order alternated and recorded;
 - fresh, sequential Docker servers on the same machine;
-- one asynchronous OpenAI-compatible streaming client for both engines;
+- one asynchronous OpenAI-compatible streaming client for every backend;
 - server logs, commands, image digests, environment capture, Prometheus
   snapshots, GPU/CPU telemetry, per-request timings, and report tables.
 
@@ -96,7 +96,7 @@ Rebuild the report without rerunning inference:
 ## Main flags
 
 ```text
---engines both|vllm|sglang
+--engines both|vllm|sglang|tensorrt_llm
 --modes cold,warm_shared,exact_repeat
 --concurrency 1,2,4
 --repetitions 3
@@ -139,6 +139,7 @@ For arbitrary engine switches, use a YAML override file or append an argument:
 ./bench run --config my-config.yaml
 ./bench run --vllm-extra-arg=--some-vllm-flag
 ./bench run --sglang-extra-arg=--some-sglang-flag
+./bench run --tensorrt-llm-extra-arg=--some-trtllm-flag
 ```
 
 View the fully resolved configuration:
@@ -146,6 +147,43 @@ View the fully resolved configuration:
 ```bash
 ./bench show-config
 ```
+
+## TensorRT-LLM direct backend
+
+Direct TensorRT-LLM serving uses the same benchmark plan, prepared JSONL files,
+streaming client, validation, result schema, and reports:
+
+```bash
+./bench run --engines tensorrt_llm --modes cold,warm_shared
+```
+
+Run the one-request cold smoke configuration first:
+
+```bash
+./bench run --config config/tensorrt-llm-smoke.yaml --skip-image-pull
+```
+
+For a combined three-engine comparison, reuse matching valid SGLang and vLLM
+runs and add TensorRT-LLM with:
+
+```bash
+./bench run --engines sglang,vllm,tensorrt_llm \
+  --modes cold,warm_shared --concurrency 1,2,4 --repetitions 3 --resume
+```
+
+This starts the configured `trtllm-serve serve` image and pins the Hugging Face
+model and tokenizer to `experiment.lock.json`. A separate model/tokenizer
+revision pair, an unsupported KV-cache dtype, or a server that advertises a
+different model is rejected. Chunked prefill is enabled, and TensorRT-LLM's
+default KV-block reuse supplies cross-request prefix caching.
+The default image is NVIDIA TensorRT-LLM `1.3.0rc21`; its native `TRTLLM`
+attention backend is retained without a FlashInfer override.
+
+Triton serving is deliberately deferred; this branch supports only direct
+`trtllm-serve` so an unverified model-repository path cannot be selected.
+
+The legacy `both` shorthand remains `sglang,vllm`; use a comma-separated list
+to compare the additional direct TensorRT-LLM backend.
 
 ## Host requirements
 

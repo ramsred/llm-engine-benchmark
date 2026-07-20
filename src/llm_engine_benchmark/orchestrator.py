@@ -191,6 +191,7 @@ def run_experiment(
         action = _prepare_run_directory(
             run_dir,
             signature=run_signature,
+            experiment_scope_signature=experiment_scope_signature,
             resume=options.resume,
             overwrite=options.overwrite,
         )
@@ -379,7 +380,7 @@ def _execute_one_run(
 
         warmup_results = send_warmup_requests(
             base_url=server.base_url,
-            model=str(config["project"]["model"]),
+            model=server.api_model,
             prompts=warmup_records,
             tokenizer=tokenizer,
             request_extra=request_extra,
@@ -399,7 +400,7 @@ def _execute_one_run(
         try:
             client_options = ClientRunOptions(
                 base_url=server.base_url,
-                model=str(config["project"]["model"]),
+                model=server.api_model,
                 engine=spec.engine,
                 cache_mode=spec.mode,
                 concurrency=spec.concurrency,
@@ -569,15 +570,8 @@ def _engine_order(
         return tuple(values)
     if run_order != "alternate":
         raise BenchmarkError(f"Unknown run order: {run_order}")
-    if repetition == 1:
-        preferred = ("sglang", "vllm")
-    elif repetition == 2:
-        preferred = ("vllm", "sglang")
-    else:
-        values = list(unique)
-        random.Random(seed + repetition * 104729).shuffle(values)
-        return tuple(values)
-    return tuple(name for name in preferred if name in unique)
+    offset = (repetition - 1) % len(unique)
+    return unique[offset:] + unique[:offset]
 
 
 def _run_directory(results_dir: Path, spec: RunSpec) -> Path:
@@ -591,7 +585,12 @@ def _run_directory(results_dir: Path, spec: RunSpec) -> Path:
 
 
 def _prepare_run_directory(
-    run_dir: Path, *, signature: str, resume: bool, overwrite: bool
+    run_dir: Path,
+    *,
+    signature: str,
+    experiment_scope_signature: str,
+    resume: bool,
+    overwrite: bool,
 ) -> str:
     if run_dir.exists():
         metadata_path = run_dir / "run_metadata.json"
@@ -600,7 +599,20 @@ def _prepare_run_directory(
             metadata = load_json(metadata_path)
             results = load_json(results_path)
             if metadata.get("run_signature") == signature and results.get("valid") is True:
+                previous_scope = metadata.get("experiment_scope_signature")
+                if previous_scope != experiment_scope_signature:
+                    source_scopes = metadata.get("source_experiment_scope_signatures", [])
+                    if not isinstance(source_scopes, list):
+                        source_scopes = []
+                    if previous_scope and previous_scope not in source_scopes:
+                        source_scopes.append(previous_scope)
+                    metadata["source_experiment_scope_signatures"] = source_scopes
+                    metadata["experiment_scope_signature"] = experiment_scope_signature
+                    metadata["resumed_into_scope_at"] = utc_now()
+                    atomic_write_json(metadata_path, metadata)
                 return "skip"
+        if resume and not any(run_dir.iterdir()):
+            return "run"
         if overwrite:
             shutil.rmtree(run_dir)
         else:
@@ -665,10 +677,14 @@ def _fairness_settings(config: Mapping[str, Any]) -> dict[str, Any]:
         "kv_cache_dtype": {
             "vllm": config["engines"]["vllm"]["kv_cache_dtype"],
             "sglang": config["engines"]["sglang"]["kv_cache_dtype"],
+            "tensorrt_llm": config["engines"]["tensorrt_llm"]["kv_cache_dtype"],
         },
         "memory_fraction": {
             "vllm": config["engines"]["vllm"]["gpu_memory_utilization"],
             "sglang": config["engines"]["sglang"]["mem_fraction_static"],
+            "tensorrt_llm": config["engines"]["tensorrt_llm"][
+                "kv_cache_free_gpu_memory_fraction"
+            ],
         },
         "prefill_budget": {
             "vllm_max_num_batched_tokens": config["engines"]["vllm"][
@@ -677,9 +693,16 @@ def _fairness_settings(config: Mapping[str, Any]) -> dict[str, Any]:
             "sglang_chunked_prefill_size": config["engines"]["sglang"][
                 "chunked_prefill_size"
             ],
+            "tensorrt_llm_max_num_tokens": config["engines"]["tensorrt_llm"][
+                "max_num_tokens"
+            ],
             "limitation": "conceptually comparable, not mechanically identical",
         },
-        "prefix_caching": {"vllm": "enabled", "sglang": "RadixAttention default"},
+        "prefix_caching": {
+            "vllm": "enabled",
+            "sglang": "RadixAttention default",
+            "tensorrt_llm": "KV block reuse default",
+        },
         "cuda_graphs": "enabled/default; eager mode not forced",
     }
 
@@ -688,6 +711,7 @@ def _is_full_design(config: Mapping[str, Any], options: RunOptions) -> bool:
     project = config["project"]
     vllm = config["engines"]["vllm"]
     sglang = config["engines"]["sglang"]
+    tensorrt_llm = config["engines"]["tensorrt_llm"]
     return (
         str(project["model"]) == "openai/gpt-oss-20b"
         and int(project["input_tokens"]) == 120_000
@@ -705,11 +729,25 @@ def _is_full_design(config: Mapping[str, Any], options: RunOptions) -> bool:
         and bool(vllm.get("request_extra", {}).get("ignore_eos"))
         and bool(sglang.get("request_extra", {}).get("ignore_eos"))
         and vllm.get("request_extra", {}).get("add_special_tokens") is False
+        and sglang.get("request_extra", {}).get("add_special_tokens") is False
+        and (
+            "tensorrt_llm" not in options.engines
+            or (
+                float(tensorrt_llm["kv_cache_free_gpu_memory_fraction"]) == 0.85
+                and int(tensorrt_llm["max_num_tokens"]) == 8_192
+                and str(tensorrt_llm["kv_cache_dtype"]).lower() == "fp8"
+                and bool(tensorrt_llm.get("request_extra", {}).get("ignore_eos"))
+                and tensorrt_llm.get("request_extra", {}).get("add_special_tokens") is False
+            )
+        )
         and options.sample_limit == 100
         and options.repetitions == 3
         and set(options.concurrencies) == {1, 2, 4}
         and set(options.modes) >= {"cold", "warm_shared"}
-        and set(options.engines) == {"sglang", "vllm"}
+        and set(options.engines) in (
+            {"sglang", "vllm"},
+            {"sglang", "vllm", "tensorrt_llm"},
+        )
     )
 
 

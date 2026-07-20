@@ -51,7 +51,21 @@ class ServerArgumentTests(unittest.TestCase):
                     "dtype": "bfloat16",
                     "quantization": "mxfp4",
                     "extra_args": [],
-                }
+                },
+                "tensorrt_llm": {
+                    "image": "trtllm:test",
+                    "container_name": "trtllm-test",
+                    "host_port": 8001,
+                    "container_port": 8000,
+                    "backend": "pytorch",
+                    "max_batch_size": 4,
+                    "max_num_tokens": 8192,
+                    "kv_cache_free_gpu_memory_fraction": 0.85,
+                    "kv_cache_dtype": "fp8",
+                    "dtype": "bfloat16",
+                    "quantization": "mxfp4",
+                    "extra_args": [],
+                },
             },
         }
 
@@ -187,6 +201,40 @@ class ServerArgumentTests(unittest.TestCase):
             args = server._build_server_args()
             self.assertEqual(args[args.index("--revision") + 1], revision)
 
+
+    def test_tensorrt_llm_uses_pinned_openai_server(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            revision = "a" * 40
+            server = DockerEngineServer(
+                engine="tensorrt_llm",
+                config=self._config(root),
+                lock={"model": {"commit_sha": revision, "tokenizer_commit_sha": revision}},
+                run_dir=root / "run",
+                skip_image_pull=True,
+            )
+            args = server._build_server_args()
+            self.assertEqual(args[:3], ["trtllm-serve", "serve", "openai/gpt-oss-20b"])
+            self.assertEqual(args[args.index("--hf_revision") + 1], revision)
+            self.assertEqual(args[args.index("--served_model_name") + 1], "openai/gpt-oss-20b")
+            self.assertIn("--max_seq_len", args)
+            self.assertIn("--enable_chunked_prefill", args)
+
+    def test_tensorrt_llm_rejects_unsupported_kv_cache_dtype(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            revision = "a" * 40
+            config = self._config(root)
+            config["engines"]["tensorrt_llm"]["kv_cache_dtype"] = "fp8_e4m3"
+            server = DockerEngineServer(
+                engine="tensorrt_llm",
+                config=config,
+                lock={"model": {"commit_sha": revision, "tokenizer_commit_sha": revision}},
+                run_dir=root / "run",
+                skip_image_pull=True,
+            )
+            with self.assertRaisesRegex(BenchmarkError, "Unsupported TensorRT-LLM"):
+                server._build_server_args()
 
     def test_hf_token_is_forwarded_by_name_and_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

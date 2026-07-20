@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from . import __version__
-from .config import DEFAULT_CONFIG_PATH, load_config
+from .config import DEFAULT_CONFIG_PATH, SUPPORTED_ENGINES, load_config
 from .datasets import build_canonical_manifest
 from .environment import run_doctor
 from .locking import load_or_create_lock
@@ -21,7 +21,7 @@ from .validate import validate_prepared_dataset
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bench",
-        description="Neutral long-context benchmark for SGLang and vLLM",
+        description="Neutral long-context benchmark for SGLang, vLLM, and TensorRT-LLM",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -53,7 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--engines",
         default=None,
-        help="both, vllm, sglang, or a comma-separated list; defaults to project.engines",
+        help=(
+            "both, vllm, sglang, tensorrt_llm, or a "
+            "comma-separated list; defaults to project.engines"
+        ),
     )
     run.add_argument(
         "--modes",
@@ -115,13 +118,15 @@ def _add_common_config_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--gpus", default=None, help="Docker --gpus value, for example all")
     parser.add_argument("--vllm-image", default=None)
     parser.add_argument("--sglang-image", default=None)
+    parser.add_argument("--tensorrt-llm-image", default=None)
     parser.add_argument("--vllm-port", type=int, default=None)
     parser.add_argument("--sglang-port", type=int, default=None)
+    parser.add_argument("--tensorrt-llm-port", type=int, default=None)
     parser.add_argument(
         "--memory-fraction",
         type=float,
         default=None,
-        help="Set matched vLLM GPU utilization and SGLang static memory fraction",
+        help="Set matched GPU memory fractions for vLLM, SGLang, and TensorRT-LLM",
     )
     parser.add_argument(
         "--prefill-budget",
@@ -142,6 +147,12 @@ def _add_common_config_flags(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=None,
         help="Append a server argument; use --sglang-extra-arg=--flag",
+    )
+    parser.add_argument(
+        "--tensorrt-llm-extra-arg",
+        action="append",
+        default=None,
+        help="Append a trtllm-serve argument; use --tensorrt-llm-extra-arg=--flag",
     )
 
 
@@ -171,23 +182,33 @@ def _config_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "project.gpus": args.gpus,
         "engines.vllm.image": args.vllm_image,
         "engines.sglang.image": args.sglang_image,
+        "engines.tensorrt_llm.image": args.tensorrt_llm_image,
         "engines.vllm.host_port": args.vllm_port,
         "engines.sglang.host_port": args.sglang_port,
+        "engines.tensorrt_llm.host_port": args.tensorrt_llm_port,
         "project.trust_remote_code": args.trust_remote_code,
     }
     if args.memory_fraction is not None:
         overrides["engines.vllm.gpu_memory_utilization"] = args.memory_fraction
         overrides["engines.sglang.mem_fraction_static"] = args.memory_fraction
+        overrides["engines.tensorrt_llm.kv_cache_free_gpu_memory_fraction"] = args.memory_fraction
     if args.prefill_budget is not None:
         overrides["engines.vllm.max_num_batched_tokens"] = args.prefill_budget
         overrides["engines.sglang.chunked_prefill_size"] = args.prefill_budget
+        overrides["engines.tensorrt_llm.max_num_tokens"] = args.prefill_budget
     if args.kv_cache_dtype is not None:
         overrides["engines.vllm.kv_cache_dtype"] = args.kv_cache_dtype
         overrides["engines.sglang.kv_cache_dtype"] = args.kv_cache_dtype
+        trtllm_dtype = str(args.kv_cache_dtype).lower()
+        if trtllm_dtype == "fp8_e4m3":
+            trtllm_dtype = "fp8"
+        overrides["engines.tensorrt_llm.kv_cache_dtype"] = trtllm_dtype
     if args.vllm_extra_arg is not None:
         overrides["engines.vllm.extra_args"] = args.vllm_extra_arg
     if args.sglang_extra_arg is not None:
         overrides["engines.sglang.extra_args"] = args.sglang_extra_arg
+    if args.tensorrt_llm_extra_arg is not None:
+        overrides["engines.tensorrt_llm.extra_args"] = args.tensorrt_llm_extra_arg
     if getattr(args, "skip_ruler_source", False):
         overrides["sources.ruler.fetch_upstream_source"] = False
     return load_config(args.config, overrides=overrides)
@@ -338,7 +359,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _validate_engine_sequence(values: Sequence[Any]) -> tuple[str, ...]:
     engines = tuple(str(value).strip().lower() for value in values if str(value).strip())
-    invalid = set(engines) - {"sglang", "vllm"}
+    invalid = set(engines) - SUPPORTED_ENGINES
     if invalid or not engines:
         raise BenchmarkError(f"Invalid project.engines selection: {list(values)}")
     return tuple(dict.fromkeys(engines))
@@ -349,7 +370,7 @@ def _parse_engines(value: str) -> tuple[str, ...]:
     if normalized == "both":
         return ("sglang", "vllm")
     engines = tuple(_parse_csv(normalized))
-    invalid = set(engines) - {"sglang", "vllm"}
+    invalid = set(engines) - SUPPORTED_ENGINES
     if invalid or not engines:
         raise BenchmarkError(f"Invalid engine selection: {value}")
     return tuple(dict.fromkeys(engines))
