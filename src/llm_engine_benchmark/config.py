@@ -10,9 +10,7 @@ from .util import BenchmarkError, deep_merge, expand_env, set_nested
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SUPPORTED_ENGINES = frozenset(
-    {"sglang", "vllm", "tensorrt_llm", "tensorrt_llm_triton"}
-)
+SUPPORTED_ENGINES = frozenset({"sglang", "vllm", "tensorrt_llm"})
 _PACKAGED_DEFAULT = Path(__file__).with_name("default.yaml")
 _PROJECT_DEFAULT = PROJECT_ROOT / "config" / "default.yaml"
 DEFAULT_CONFIG_PATH = _PROJECT_DEFAULT if _PROJECT_DEFAULT.exists() else _PACKAGED_DEFAULT

@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--engines",
         default=None,
         help=(
-            "both, vllm, sglang, tensorrt_llm, tensorrt_llm_triton, or a "
+            "both, vllm, sglang, tensorrt_llm, or a "
             "comma-separated list; defaults to project.engines"
         ),
     )
@@ -119,26 +119,14 @@ def _add_common_config_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--vllm-image", default=None)
     parser.add_argument("--sglang-image", default=None)
     parser.add_argument("--tensorrt-llm-image", default=None)
-    parser.add_argument("--tensorrt-llm-triton-image", default=None)
     parser.add_argument("--vllm-port", type=int, default=None)
     parser.add_argument("--sglang-port", type=int, default=None)
     parser.add_argument("--tensorrt-llm-port", type=int, default=None)
-    parser.add_argument("--tensorrt-llm-triton-port", type=int, default=None)
-    parser.add_argument(
-        "--triton-model-repository",
-        default=None,
-        help="Host path to a prepared Triton TensorRT-LLM model repository",
-    )
-    parser.add_argument(
-        "--triton-served-model-name",
-        default=None,
-        help="Client-facing Triton model name (for example tensorrt_llm_bls)",
-    )
     parser.add_argument(
         "--memory-fraction",
         type=float,
         default=None,
-        help="Set matched vLLM GPU utilization and SGLang static memory fraction",
+        help="Set matched GPU memory fractions for vLLM, SGLang, and TensorRT-LLM",
     )
     parser.add_argument(
         "--prefill-budget",
@@ -165,12 +153,6 @@ def _add_common_config_flags(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=None,
         help="Append a trtllm-serve argument; use --tensorrt-llm-extra-arg=--flag",
-    )
-    parser.add_argument(
-        "--tensorrt-llm-triton-extra-arg",
-        action="append",
-        default=None,
-        help="Append a Triton OpenAI frontend argument",
     )
 
 
@@ -201,13 +183,9 @@ def _config_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "engines.vllm.image": args.vllm_image,
         "engines.sglang.image": args.sglang_image,
         "engines.tensorrt_llm.image": args.tensorrt_llm_image,
-        "engines.tensorrt_llm_triton.image": args.tensorrt_llm_triton_image,
         "engines.vllm.host_port": args.vllm_port,
         "engines.sglang.host_port": args.sglang_port,
         "engines.tensorrt_llm.host_port": args.tensorrt_llm_port,
-        "engines.tensorrt_llm_triton.host_port": args.tensorrt_llm_triton_port,
-        "engines.tensorrt_llm_triton.model_repository": args.triton_model_repository,
-        "engines.tensorrt_llm_triton.served_model_name": args.triton_served_model_name,
         "project.trust_remote_code": args.trust_remote_code,
     }
     if args.memory_fraction is not None:
@@ -221,15 +199,16 @@ def _config_from_args(args: argparse.Namespace) -> dict[str, Any]:
     if args.kv_cache_dtype is not None:
         overrides["engines.vllm.kv_cache_dtype"] = args.kv_cache_dtype
         overrides["engines.sglang.kv_cache_dtype"] = args.kv_cache_dtype
-        overrides["engines.tensorrt_llm.kv_cache_dtype"] = args.kv_cache_dtype
+        trtllm_dtype = str(args.kv_cache_dtype).lower()
+        if trtllm_dtype == "fp8_e4m3":
+            trtllm_dtype = "fp8"
+        overrides["engines.tensorrt_llm.kv_cache_dtype"] = trtllm_dtype
     if args.vllm_extra_arg is not None:
         overrides["engines.vllm.extra_args"] = args.vllm_extra_arg
     if args.sglang_extra_arg is not None:
         overrides["engines.sglang.extra_args"] = args.sglang_extra_arg
     if args.tensorrt_llm_extra_arg is not None:
         overrides["engines.tensorrt_llm.extra_args"] = args.tensorrt_llm_extra_arg
-    if args.tensorrt_llm_triton_extra_arg is not None:
-        overrides["engines.tensorrt_llm_triton.extra_args"] = args.tensorrt_llm_triton_extra_arg
     if getattr(args, "skip_ruler_source", False):
         overrides["sources.ruler.fetch_upstream_source"] = False
     return load_config(args.config, overrides=overrides)

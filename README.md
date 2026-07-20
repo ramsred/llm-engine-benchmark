@@ -96,7 +96,7 @@ Rebuild the report without rerunning inference:
 ## Main flags
 
 ```text
---engines both|vllm|sglang|tensorrt_llm|tensorrt_llm_triton
+--engines both|vllm|sglang|tensorrt_llm
 --modes cold,warm_shared,exact_repeat
 --concurrency 1,2,4
 --repetitions 3
@@ -139,6 +139,7 @@ For arbitrary engine switches, use a YAML override file or append an argument:
 ./bench run --config my-config.yaml
 ./bench run --vllm-extra-arg=--some-vllm-flag
 ./bench run --sglang-extra-arg=--some-sglang-flag
+./bench run --tensorrt-llm-extra-arg=--some-trtllm-flag
 ```
 
 View the fully resolved configuration:
@@ -147,7 +148,7 @@ View the fully resolved configuration:
 ./bench show-config
 ```
 
-## TensorRT-LLM backends
+## TensorRT-LLM direct backend
 
 Direct TensorRT-LLM serving uses the same benchmark plan, prepared JSONL files,
 streaming client, validation, result schema, and reports:
@@ -156,43 +157,33 @@ streaming client, validation, result schema, and reports:
 ./bench run --engines tensorrt_llm --modes cold,warm_shared
 ```
 
-This starts the configured `trtllm-serve` image and pins the Hugging Face model
-and tokenizer to `experiment.lock.json`. A separate model/tokenizer revision pair,
-an unsupported KV-cache dtype, or a server that advertises a different model is
-rejected instead of being substituted.
-
-Triton integration is intentionally a distinct backend name. It requires a
-prebuilt TensorRT-LLM Triton model repository and explicit deployment metadata
-in a YAML override, because the harness cannot safely infer an engine build
-revision, precision, quantization, or context length from its directory name:
-
-```yaml
-project:
-  engines: [tensorrt_llm_triton]
-engines:
-  tensorrt_llm_triton:
-    model_repository: /absolute/path/to/triton_model_repo
-    served_model_name: tensorrt_llm_bls
-    deployment:
-      model: openai/gpt-oss-20b
-      model_revision: <exact commit from experiment.lock.json>
-      tokenizer_revision: <exact tokenizer commit from experiment.lock.json>
-      context_length: 131072
-      dtype: bfloat16
-      quantization: mxfp4
-```
-
-Run it with:
+Run the one-request cold smoke configuration first:
 
 ```bash
-./bench run --config triton.yaml --engines tensorrt_llm_triton
+./bench run --config config/tensorrt-llm-smoke.yaml --skip-image-pull
 ```
 
-The OpenAI adapter uses the pinned tokenizer snapshot already prepared by the
-benchmark and sends requests to `served_model_name`. Deployment metadata must
-match the active lock and benchmark configuration exactly. The legacy `both`
-shorthand remains `sglang,vllm`; use a comma-separated list to compare any
-additional backends.
+For a combined three-engine comparison, reuse matching valid SGLang and vLLM
+runs and add TensorRT-LLM with:
+
+```bash
+./bench run --engines sglang,vllm,tensorrt_llm \
+  --modes cold,warm_shared --concurrency 1,2,4 --repetitions 3 --resume
+```
+
+This starts the configured `trtllm-serve serve` image and pins the Hugging Face
+model and tokenizer to `experiment.lock.json`. A separate model/tokenizer
+revision pair, an unsupported KV-cache dtype, or a server that advertises a
+different model is rejected. Chunked prefill is enabled, and TensorRT-LLM's
+default KV-block reuse supplies cross-request prefix caching.
+The default image is NVIDIA TensorRT-LLM `1.3.0rc21`; its native `TRTLLM`
+attention backend is retained without a FlashInfer override.
+
+Triton serving is deliberately deferred; this branch supports only direct
+`trtllm-serve` so an unverified model-repository path cannot be selected.
+
+The legacy `both` shorthand remains `sglang,vllm`; use a comma-separated list
+to compare the additional direct TensorRT-LLM backend.
 
 ## Host requirements
 

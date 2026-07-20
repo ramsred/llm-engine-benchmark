@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
 from llm_engine_benchmark.orchestrator import (
     RunOptions,
     _build_runtime_warmup_prompt,
+    _prepare_run_directory,
     build_run_plan,
     select_stratified_records,
 )
@@ -36,12 +40,12 @@ class OrchestratorTests(unittest.TestCase):
         second_rep_first_pair = [plan[12].engine, plan[13].engine]
         self.assertEqual(second_rep_first_pair, ["vllm", "sglang"])
 
-    def test_alternate_order_keeps_additional_backends(self) -> None:
+    def test_alternate_order_rotates_three_backends(self) -> None:
         options = RunOptions(
-            engines=("sglang", "vllm", "tensorrt_llm", "tensorrt_llm_triton"),
+            engines=("sglang", "vllm", "tensorrt_llm"),
             modes=("cold",),
             concurrencies=(1,),
-            repetitions=2,
+            repetitions=3,
             sample_limit=1,
             run_order="alternate",
         )
@@ -49,10 +53,51 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(
             [spec.engine for spec in plan],
             [
-                "sglang", "vllm", "tensorrt_llm", "tensorrt_llm_triton",
-                "vllm", "sglang", "tensorrt_llm", "tensorrt_llm_triton",
+                "sglang", "vllm", "tensorrt_llm",
+                "vllm", "tensorrt_llm", "sglang",
+                "tensorrt_llm", "sglang", "vllm",
             ],
         )
+
+    def test_resume_adopts_valid_run_into_active_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            run_dir = Path(temp) / "run"
+            run_dir.mkdir()
+            (run_dir / "run_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "run_signature": "same-run",
+                        "experiment_scope_signature": "old-scope",
+                    }
+                )
+            )
+            (run_dir / "client_results.json").write_text(json.dumps({"valid": True}))
+
+            action = _prepare_run_directory(
+                run_dir,
+                signature="same-run",
+                experiment_scope_signature="combined-scope",
+                resume=True,
+                overwrite=False,
+            )
+
+            self.assertEqual(action, "skip")
+            metadata = json.loads((run_dir / "run_metadata.json").read_text())
+            self.assertEqual(metadata["experiment_scope_signature"], "combined-scope")
+            self.assertEqual(metadata["source_experiment_scope_signatures"], ["old-scope"])
+
+    def test_resume_accepts_empty_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            run_dir = Path(temp) / "run"
+            run_dir.mkdir()
+            action = _prepare_run_directory(
+                run_dir,
+                signature="new-run",
+                experiment_scope_signature="scope",
+                resume=True,
+                overwrite=False,
+            )
+            self.assertEqual(action, "run")
 
     def test_runtime_warmup_is_exactly_32_tokens(self) -> None:
         prompt = _build_runtime_warmup_prompt(CharTokenizer())
