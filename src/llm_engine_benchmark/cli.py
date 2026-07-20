@@ -313,11 +313,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise BenchmarkError(f"Unknown run order: {run_order}")
 
             if args.dry_run:
-                lock = load_or_create_lock(
-                    config,
-                    refresh=args.refresh_lock,
-                    acquire_sources=False,
-                )
+                lock_path = Path(str(config["paths"]["lock_file"]))
+                if lock_path.exists():
+                    lock = load_or_create_lock(
+                        config,
+                        refresh=args.refresh_lock,
+                        acquire_sources=False,
+                    )
+                else:
+                    # Dry-run validation must work on a clean checkout without
+                    # resolving model, dataset, or Git revisions over the network.
+                    lock = _build_dry_run_lock(config)
             else:
                 lock, _, _, _ = _prepare(config, args)
             cooldown = (
@@ -355,6 +361,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:
         print(f"UNEXPECTED ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
+
+
+def _build_dry_run_lock(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the minimum lock shape needed to render commands without network access."""
+
+    project = config["project"]
+    model_revision = str(project.get("model_revision") or "main")
+    tokenizer_revision = str(project.get("tokenizer_revision") or model_revision)
+    return {
+        "format_version": 1,
+        "model": {
+            "repo_id": str(project["model"]),
+            "revision_requested": model_revision,
+            "commit_sha": "dry-run",
+            "tokenizer_revision_requested": tokenizer_revision,
+            "tokenizer_commit_sha": "dry-run",
+        },
+        "datasets": {},
+        "sources": {},
+    }
 
 
 def _validate_engine_sequence(values: Sequence[Any]) -> tuple[str, ...]:

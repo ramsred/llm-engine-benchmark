@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    env:
+      BENCH_NO_BOOTSTRAP: "1"
+      PYTHON_BIN: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Validate CLI
+        run: |
+          ./bench --help
+          ./bench show-config
+          ./bench run --dry-run --engines vllm,sglang,tensorrt_llm --samples 5
+      - name: Verify project manifest
+        run: sha256sum -c PROJECT_MANIFEST.sha256 --quiet

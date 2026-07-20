@@ -1,0 +1,9 @@
+{
+  "generated_by": "llm-engine-benchmark/scripts/generate_charts.py",
+  "source_summary": "results/summaries/combined-summary.csv",
+  "source_sha256": "a35a62233b000188b3f22a1acfcf6a2f2cccdb9dfe7324a7d5870f0b8eea36f2",
+  "benchmark_commit": "707ff2881ae8618b977118c882e26b3597a9ed1d",
+  "status_values_are": [
+    "preliminary"
+  ]
+}

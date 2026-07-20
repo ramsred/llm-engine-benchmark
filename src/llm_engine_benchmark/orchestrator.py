@@ -719,8 +719,8 @@ def _is_full_design(config: Mapping[str, Any], options: RunOptions) -> bool:
         and int(project["context_length"]) == 131_072
         and int(project["shared_prefix_tokens"]) == 100_000
         and int(project["warm_groups"]) == 10
-        and float(vllm["gpu_memory_utilization"]) == 0.85
-        and float(sglang["mem_fraction_static"]) == 0.85
+        and float(vllm["gpu_memory_utilization"]) == 0.80
+        and float(sglang["mem_fraction_static"]) == 0.80
         and int(vllm["max_num_batched_tokens"]) == 8_192
         and bool(project.get("require_server_token_usage", True))
         and int(sglang["chunked_prefill_size"]) == 8_192
@@ -733,7 +733,7 @@ def _is_full_design(config: Mapping[str, Any], options: RunOptions) -> bool:
         and (
             "tensorrt_llm" not in options.engines
             or (
-                float(tensorrt_llm["kv_cache_free_gpu_memory_fraction"]) == 0.85
+                float(tensorrt_llm["kv_cache_free_gpu_memory_fraction"]) == 0.80
                 and int(tensorrt_llm["max_num_tokens"]) == 8_192
                 and str(tensorrt_llm["kv_cache_dtype"]).lower() == "fp8"
                 and bool(tensorrt_llm.get("request_extra", {}).get("ignore_eos"))
