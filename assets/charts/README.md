@@ -15,8 +15,8 @@
 ### Request throughput
 ![Warm shared-prefix request throughput](../04_warm_shared_request_throughput.png)
 
-### Latency-throughput frontier
-![Latency-throughput frontier](../05_latency_throughput_frontier.png)
+### Measured TTFT–throughput operating points
+![Measured TTFT-throughput operating points](../measured-ttft-throughput-operating-points.svg)
 
 ### Verified prefix-cache benefit
 ![TensorRT-LLM cache TTFT reduction](../06_tensorrt_cache_ttft_reduction.png)

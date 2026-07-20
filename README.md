@@ -4,7 +4,7 @@
 
 A reproducible, neutral benchmark for choosing a long-context serving stack on NVIDIA GB10. It compares vLLM, SGLang, and direct TensorRT-LLM serving with the same prompts, client-side metric formulas, cache protocols, and concurrency matrix.
 
-![Decision dashboard](assets/charts/05_latency_throughput_frontier.png)
+![Decision dashboard](assets/charts/measured-ttft-throughput-operating-points.svg)
 
 > The checked-in cross-engine values are preliminary one-repetition evidence. They are useful for portfolio review and experiment planning, but are not a final universal ranking. Run the three-repetition matrix before making production decisions.
 
@@ -101,6 +101,20 @@ TensorRT-LLM uses the direct `trtllm-serve` backend with the same prepared promp
 GitHub Actions runs on Python 3.10, 3.11, and 3.12. It installs `.[dev]`, runs pytest, validates the CLI and three-engine dry-run plan, and verifies `PROJECT_MANIFEST.sha256`. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 The repository excludes model weights, Hugging Face caches, TensorRT engines, server logs, raw telemetry, and request JSONL from version control. Large evidence bundles belong in GitHub Releases with their lock file, image digests, environment manifest, and benchmark commit.
+
+## Roadmap
+
+- [x] vLLM integration
+- [x] SGLang integration
+- [x] TensorRT-LLM direct integration
+- [x] 120K cold and warm shared-prefix workloads
+- [x] Cache evidence and result provenance
+- [x] CI and packaging validation
+- [ ] Three repetitions per matrix cell
+- [ ] Nsight Systems profiling
+- [ ] TensorRT-LLM through Triton
+- [ ] Context scaling: 8K, 32K, 64K, 120K
+- [ ] SLA-constrained throughput
 
 ## Authorship and citation
 

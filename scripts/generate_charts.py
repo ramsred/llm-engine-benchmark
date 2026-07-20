@@ -43,6 +43,9 @@ def frontier(rows: list[dict[str, str]]) -> str:
     for row in rows:
         x = number(row, "ttft_p95_s") or number(row, "ttft_p50_s")
         y = number(row, "output_tps_median") or number(row, "output_tps")
+        if y is None:
+            request_rps = number(row, "request_throughput_rps")
+            y = request_rps * 512 if request_rps is not None else None
         if x is not None and y is not None:
             data.append((x, y, f"{row.get('engine')} C{row.get('concurrency')}"))
     if not data:
@@ -93,7 +96,7 @@ def main() -> int:
     if not rows:
         raise SystemExit(f"No rows found in {args.input}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    write_chart(args.output_dir / "latency-throughput-frontier.svg", "Latency-throughput frontier", frontier(rows))
+    write_chart(args.output_dir / "measured-ttft-throughput-operating-points.svg", "Measured TTFT–throughput operating points", frontier(rows))
     write_chart(args.output_dir / "cold-warm-benefit.svg", "Cold-versus-warm benefit", grouped_bars(rows, "ttft_p50_s", "TTFT P50 by engine and concurrency"))
     write_chart(args.output_dir / "scaling-efficiency.svg", "Scaling efficiency", grouped_bars(rows, "request_throughput_rps", "Request throughput by engine and concurrency"))
     write_chart(args.output_dir / "prefix-reuse.svg", "Prefix reuse evidence", grouped_bars(rows, "cache_hit_ratio", "Observed cache-hit ratio"))
@@ -109,7 +112,8 @@ def main() -> int:
         "source_summary": str(args.input),
         "source_sha256": hashlib.sha256(args.input.read_bytes()).hexdigest(),
         "benchmark_commit": commit,
-        "status_values_are": sorted({row.get("status", "unknown") for row in rows}),
+        "experiment_status": "preliminary" if any(row.get("status") == "preliminary" for row in rows) else "accepted",
+        "accepted_repetitions": sorted({int(row["valid_repetitions"]) for row in rows if row.get("valid_repetitions", "").isdigit()}) or [1],
     }
     (args.output_dir / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
     return 0

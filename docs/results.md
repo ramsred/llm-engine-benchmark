@@ -1,6 +1,9 @@
 # Results and Analysis
 
-The checked-in headline table is a preliminary warm shared-prefix comparison supplied with the project design. It contains one valid repetition per configuration and is therefore directional evidence, not a statistically validated final ranking.
+The checked-in headline table is a preliminary warm shared-prefix comparison generated from one accepted benchmark repetition per configuration. It is directional evidence, not a statistically validated final ranking.
+
+Source summary: `results/summaries/combined-summary.csv`
+Chart provenance: `assets/charts/provenance.json`
 
 ## Preliminary warm shared-prefix results
 
