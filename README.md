@@ -59,6 +59,16 @@ Run the full three-engine matrix:
   --concurrency 1,2,4 --repetitions 3
 ```
 
+Capture an Nsight Systems trace for the TensorRT-LLM cold-C4 investigation:
+
+```bash
+./bench run --config config/tensorrt-llm-profile-c4.yaml \
+  --profile-nsys --overwrite
+```
+
+See the [profiling runbook](docs/profiling.md) for the baseline-first workflow, generated
+artifacts, and the questions the trace must answer.
+
 The smoke and full commands perform real inference and require Docker, NVIDIA Container Toolkit, model/data access, and sufficient disk. Ordinary CI runs tests, dry-run orchestration, package checks, and manifest verification only; it does not run GPU inference.
 
 ## Reports, charts, and provenance
@@ -111,7 +121,8 @@ The repository excludes model weights, Hugging Face caches, TensorRT engines, se
 - [x] Cache evidence and result provenance
 - [x] CI and packaging validation
 - [ ] Three repetitions per matrix cell
-- [ ] Nsight Systems profiling
+- [x] Nsight Systems capture integration
+- [ ] Profiler-backed root cause for the TensorRT-LLM cold-C4 ITL anomaly
 - [ ] TensorRT-LLM through Triton
 - [ ] Context scaling: 8K, 32K, 64K, 120K
 - [ ] SLA-constrained throughput
