@@ -373,6 +373,7 @@ class DockerEngineServer:
                 [
                     "--init",
                     "--stop-signal=SIGINT",
+                    "--cap-add=SYS_PTRACE",
                     "-v",
                     f"{self.profile_dir.resolve()}:/benchmark-profile",
                 ]
@@ -410,7 +411,10 @@ class DockerEngineServer:
         return [
             "nsys",
             "profile",
-            "--trace=cuda,nvtx,osrt",
+            # GB10's default hardware CUDA trace can produce a valid-looking
+            # report with no CUDA activities. The software collector is
+            # slower, but it reliably captures CUDA APIs and kernels.
+            "--trace=cuda-sw,nvtx,osrt",
             "--sample=none",
             "--cpuctxsw=none",
             "--force-overwrite=true",
@@ -451,24 +455,86 @@ class DockerEngineServer:
             if path.is_file() and path.name != "profile_manifest.json"
         )
         reports = [name for name in artifacts if name.endswith(".nsys-rep")]
+        validation_path = self.profile_dir / "cuda_trace_validation.json"
+        cuda_trace_valid = None
+        if validation_path.exists():
+            try:
+                cuda_trace_valid = bool(json.loads(validation_path.read_text())["valid"])
+            except (json.JSONDecodeError, KeyError, TypeError):
+                cuda_trace_valid = False
         atomic_write_json(
             self.profile_dir / "profile_manifest.json",
             {
                 "profiler": "NVIDIA Nsight Systems",
-                "trace_domains": ["cuda", "nvtx", "osrt"],
+                "trace_domains": ["cuda-sw", "nvtx", "osrt"],
                 "server_lifecycle_profiled": True,
                 "expected_report": "server.nsys-rep",
                 "report_complete": bool(reports),
+                "cuda_trace_valid": cuda_trace_valid,
                 "artifacts": artifacts,
                 "captured_at": utc_now(),
             },
         )
 
     def validate_profile_artifacts(self) -> None:
-        if self.profile_nsys and not any(self.profile_dir.glob("*.nsys-rep")):
+        if not self.profile_nsys:
+            return
+        reports = sorted(self.profile_dir.glob("*.nsys-rep"))
+        if not reports:
             raise BenchmarkError(
                 "Nsight Systems did not produce a .nsys-rep file. Inspect profiling/"
                 "profile_manifest.json and server.log."
+            )
+        report = self.profile_dir / "server.nsys-rep"
+        if not report.is_file():
+            report = reports[0]
+        self._validate_nsys_cuda_trace(report)
+
+    def _validate_nsys_cuda_trace(self, report: Path) -> None:
+        """Analyze with the collector image and reject CPU-only Nsight reports."""
+        completed = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{self.profile_dir.resolve()}:/benchmark-profile",
+                "--entrypoint",
+                "/bin/sh",
+                self._runtime_image_reference(),
+                "-lc",
+                "nsys stats --force-export=true "
+                "--report cuda_gpu_kern_sum,cuda_api_sum "
+                f"/benchmark-profile/{report.name}",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=600,
+        )
+        summary = completed.stdout or ""
+        atomic_write_text(self.profile_dir / "cuda_summary.txt", summary)
+        valid = (
+            completed.returncode == 0
+            and "CUDA GPU Kernel Summary" in summary
+            and "CUDA API Summary" in summary
+        )
+        atomic_write_json(
+            self.profile_dir / "cuda_trace_validation.json",
+            {
+                "valid": valid,
+                "report": report.name,
+                "returncode": completed.returncode,
+                "required_summaries": ["CUDA GPU Kernel Summary", "CUDA API Summary"],
+                "validated_at": utc_now(),
+            },
+        )
+        self._write_profile_manifest()
+        if not valid:
+            raise BenchmarkError(
+                "Nsight Systems produced a report without CUDA API and kernel data. "
+                "Inspect profiling/cuda_summary.txt and cuda_trace_validation.json."
             )
 
     def _runtime_image_reference(self) -> str:

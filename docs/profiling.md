@@ -36,9 +36,12 @@ Start with 20 requests to keep the trace manageable:
 
 If the outlier does not occur in the 20-request trace, repeat with `--samples 100`.
 
-The harness profiles the inference server inside its GPU container. It performs a fail-fast
-check for `nsys`, records the profiler version, sends `SIGINT` during shutdown so Nsight can
-export cleanly, and rejects the profiled run if no `.nsys-rep` is produced.
+The harness profiles the inference server inside its GPU container. On DGX Spark/GB10 it uses
+Nsight's software CUDA collector (`cuda-sw`) because the default hardware collector can create a
+report without CUDA activities. The profiling container receives `SYS_PTRACE`; ordinary benchmark
+runs do not. The harness performs a fail-fast check for `nsys`, records the profiler version, sends
+`SIGINT` during shutdown so Nsight can export cleanly, and rejects the run unless the report contains
+both CUDA API and GPU-kernel summaries.
 
 Each run directory retains:
 
@@ -47,6 +50,8 @@ Each run directory retains:
 | `profiling/server.nsys-rep` | Nsight Systems timeline |
 | `profiling/nsys_version.txt` | Profiler version |
 | `profiling/profile_manifest.json` | Capture completeness and trace domains |
+| `profiling/cuda_summary.txt` | CUDA API and GPU-kernel summaries generated with the collector image |
+| `profiling/cuda_trace_validation.json` | Machine-readable CUDA trace validation result |
 | `server_command.txt` | Exact container and profiler command |
 | `request_results.jsonl` | Per-request TTFT, ITL, and E2E evidence |
 | `telemetry/` and `metrics_diff.json` | GPU/host and engine metrics |
