@@ -88,6 +88,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--overwrite", action="store_true")
     run.add_argument("--keep-going", action="store_true")
     run.add_argument("--dry-run", action="store_true")
+    run.add_argument(
+        "--profile-nsys",
+        action="store_true",
+        help="Profile each inference server with Nsight Systems and retain a .nsys-rep trace",
+    )
 
     report = subparsers.add_parser("report", help="Aggregate completed run artifacts")
     _add_common_config_flags(report)
@@ -345,6 +350,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 overwrite=args.overwrite,
                 keep_going=args.keep_going,
                 dry_run=args.dry_run,
+                profile_nsys=args.profile_nsys,
             )
             summary = run_experiment(config, lock, options=options)
             print(json.dumps(summary, indent=2, sort_keys=True))

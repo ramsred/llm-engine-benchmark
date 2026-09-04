@@ -6,7 +6,7 @@ A reproducible, neutral benchmark for choosing a long-context serving stack on N
 
 ![Decision dashboard](assets/charts/measured-ttft-throughput-operating-points.svg)
 
-> The checked-in cross-engine values are preliminary one-repetition evidence. They are useful for portfolio review and experiment planning, but are not a final universal ranking. Run the three-repetition matrix before making production decisions.
+> The checked-in cross-engine values are preliminary one-repetition evidence. They are useful for portfolio review and experiment planning, but are not a final universal ranking. Run the three-repetition matrix before making production decisions. The separate TensorRT-LLM prefill-budget study uses three 100-request repetitions and profiler-backed evidence.
 
 ## What this project demonstrates
 
@@ -18,7 +18,9 @@ A reproducible, neutral benchmark for choosing a long-context serving stack on N
 
 ## Preliminary headline findings
 
-For the supplied warm shared-prefix comparison at C1/C2/C4, TensorRT-LLM has the lowest reported TTFT and E2E latency and the highest reported request throughput. The supplied data uses one repetition per configuration; the cold C4 TensorRT-LLM ITL P95 anomaly is retained as a profiling target rather than explained causally.
+For the supplied warm shared-prefix comparison at C1/C2/C4, TensorRT-LLM has the lowest reported TTFT and E2E latency and the highest reported request throughput. The supplied cross-engine data uses one repetition per configuration.
+
+The TensorRT-LLM cold-C4 anomaly has now been isolated separately. Across three 100-request repetitions, reducing the prefill budget from 8192 to 2048 improved P95 TTFT by 26.9% and P95 ITL by 42.1%, with a 2.1% output-throughput reduction. Nsight traces showed the longest attention kernel falling from 474.804 ms to 126.315 ms and the longest CUDA synchronization wait falling from 5.792 s to 1.485 s. See the [prefill-budget case study](docs/prefill-budget-case-study.md).
 
 See [results analysis](docs/results.md), [limitations](docs/fairness-and-limitations.md), and the compact [summary artifacts](results/README.md) for the evidence status and units.
 
@@ -59,6 +61,16 @@ Run the full three-engine matrix:
   --concurrency 1,2,4 --repetitions 3
 ```
 
+Capture an Nsight Systems trace for the TensorRT-LLM cold-C4 investigation:
+
+```bash
+./bench run --config config/tensorrt-llm-profile-c4.yaml \
+  --profile-nsys --overwrite
+```
+
+See the [profiling runbook](docs/profiling.md) for the baseline-first workflow, generated
+artifacts, and the questions the trace must answer.
+
 The smoke and full commands perform real inference and require Docker, NVIDIA Container Toolkit, model/data access, and sufficient disk. Ordinary CI runs tests, dry-run orchestration, package checks, and manifest verification only; it does not run GPU inference.
 
 ## Reports, charts, and provenance
@@ -88,6 +100,7 @@ accepted run JSON + request timings
 - [Architecture](docs/architecture.md)
 - [Results and analysis](docs/results.md)
 - [Profiling plan](docs/profiling.md)
+- [Prefill-budget case study](docs/prefill-budget-case-study.md)
 - [Fairness and limitations](docs/fairness-and-limitations.md)
 - [Production recommendations](docs/production-recommendations.md)
 - [Reproducibility and implementation details](docs/reproducibility.md)
@@ -111,7 +124,8 @@ The repository excludes model weights, Hugging Face caches, TensorRT engines, se
 - [x] Cache evidence and result provenance
 - [x] CI and packaging validation
 - [ ] Three repetitions per matrix cell
-- [ ] Nsight Systems profiling
+- [x] Nsight Systems capture integration
+- [x] Profiler-backed root cause for the TensorRT-LLM cold-C4 ITL anomaly
 - [ ] TensorRT-LLM through Triton
 - [ ] Context scaling: 8K, 32K, 64K, 120K
 - [ ] SLA-constrained throughput

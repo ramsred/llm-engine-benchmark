@@ -22,4 +22,18 @@ TensorRT-LLM also leads the supplied preliminary request-throughput table at C1/
 - Evidence required: Nsight Systems traces, runtime metrics, kernel timing, queueing data, and batch formation.
 - Conclusion: TensorRT-LLM is the measured leader for this workload; the experiment does not isolate the causal mechanism.
 
-The cold C4 TensorRT-LLM ITL P95 anomaly of approximately 2.15 seconds is retained as a profiling target. It should be investigated for prefill/decode interference, scheduler contention, KV-cache pressure, queueing, and request-level outliers.
+## TensorRT-LLM cold-C4 prefill-budget study
+
+The cold-C4 anomaly was reproduced, profiled, and tested with a causal intervention. Across three
+100-request repetitions, reducing the token budget from 8192 to 2048 reduced P95 TTFT from
+87.162 seconds to 63.749 seconds and P95 ITL from 2.216 seconds to 1.284 seconds. Output throughput
+changed from 9.226 to 9.029 tokens per second. A 4096-token budget produced the highest measured
+output throughput, 9.314 tokens per second, and the lowest measured P95 E2E, 224.406 seconds.
+
+Nsight evidence explains the latency change. The longest long-context attention kernel fell from
+474.804 milliseconds at budget 8192 to 126.315 milliseconds at budget 2048. The longest
+`cudaEventSynchronize` wait fell from 5.792 seconds to 1.485 seconds. The synchronization call is
+where the host waited for GPU completion; the long prefill execution window is the bottleneck.
+
+See the [complete case study](prefill-budget-case-study.md) for repeated-run variation, limitations,
+operating-point recommendations, and the reproduction command.

@@ -1,0 +1,10 @@
+project:
+  engines: [tensorrt_llm]
+  cache_modes: [cold]
+  concurrency: [4]
+  repetitions: 1
+  samples: 20
+  cooldown_seconds: 5
+
+paths:
+  results_dir: results/profiling/tensorrt-llm-cold-c4-trace

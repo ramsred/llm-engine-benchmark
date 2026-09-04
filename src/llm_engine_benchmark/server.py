@@ -32,6 +32,7 @@ class DockerEngineServer:
         lock: Mapping[str, Any],
         run_dir: str | Path,
         skip_image_pull: bool = False,
+        profile_nsys: bool = False,
     ) -> None:
         if engine not in SUPPORTED_ENGINES:
             raise BenchmarkError(f"Unsupported engine: {engine}")
@@ -41,6 +42,8 @@ class DockerEngineServer:
         self.engine_config = config["engines"][engine]
         self.run_dir = ensure_dir(run_dir)
         self.skip_image_pull = skip_image_pull
+        self.profile_nsys = profile_nsys
+        self.profile_dir = self.run_dir / "profiling"
         base_name = str(self.engine_config.get("container_name", f"llmbench-{engine}"))
         # A stable project-specific name lets a new invocation remove a stale
         # benchmark container left behind by a host reboot or hard interruption.
@@ -111,8 +114,12 @@ class DockerEngineServer:
         if self.image_digest is None:
             self.prepare_image()
 
+        if self.profile_nsys:
+            self._verify_nsys()
+
         self.server_args = self._build_server_args()
-        command = self._build_docker_command(self.server_args)
+        launched_args = self._build_profiled_server_args(self.server_args)
+        command = self._build_docker_command(launched_args)
         self.run_command = command
         atomic_write_text(self.run_dir / "server_command.txt", command_text(command) + "\n")
         atomic_write_text(self.run_dir / "image_digest.txt", (self.image_digest or "unknown") + "\n")
@@ -290,11 +297,21 @@ class DockerEngineServer:
         self.capture_inspect()
         self.capture_logs()
         subprocess.run(
-            ["docker", "stop", "--time", "30", self.container_name],
+            [
+                "docker",
+                "stop",
+                "--time",
+                "120" if self.profile_nsys else "30",
+                self.container_name,
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
         )
+        # The profiler prints export status during shutdown, so capture logs
+        # again while the stopped container still exists.
+        if self.profile_nsys:
+            self.capture_logs()
         subprocess.run(
             ["docker", "rm", "-f", self.container_name],
             stdout=subprocess.DEVNULL,
@@ -302,6 +319,8 @@ class DockerEngineServer:
             check=False,
         )
         self.started = False
+        if self.profile_nsys:
+            self._write_profile_manifest()
 
     def _assert_port_available(self) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -348,6 +367,17 @@ class DockerEngineServer:
             "-v",
             f"{paths['hf_cache_dir']}:/root/.cache/huggingface",
         ]
+        if self.profile_nsys:
+            ensure_dir(self.profile_dir)
+            command.extend(
+                [
+                    "--init",
+                    "--stop-signal=SIGINT",
+                    "--cap-add=SYS_PTRACE",
+                    "-v",
+                    f"{self.profile_dir.resolve()}:/benchmark-profile",
+                ]
+            )
         if os.getenv("HF_TOKEN"):
             # Pass by name so the rendered command never contains the credential.
             command.extend(["-e", "HF_TOKEN"])
@@ -374,6 +404,138 @@ class DockerEngineServer:
         command.append(self._runtime_image_reference())
         command.extend(server_args)
         return command
+
+    def _build_profiled_server_args(self, server_args: Sequence[str]) -> list[str]:
+        if not self.profile_nsys:
+            return list(server_args)
+        return [
+            "nsys",
+            "profile",
+            # GB10's default hardware CUDA trace can produce a valid-looking
+            # report with no CUDA activities. The software collector is
+            # slower, but it reliably captures CUDA APIs and kernels.
+            "--trace=cuda-sw,nvtx,osrt",
+            "--sample=none",
+            "--cpuctxsw=none",
+            "--force-overwrite=true",
+            "--output=/benchmark-profile/server",
+            *server_args,
+        ]
+
+    def _verify_nsys(self) -> None:
+        """Fail before model startup if the runtime image lacks Nsight Systems."""
+        completed = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "/bin/sh",
+                self._runtime_image_reference(),
+                "-lc",
+                "command -v nsys >/dev/null 2>&1 && nsys --version",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+        if completed.returncode != 0:
+            raise BenchmarkError(
+                "--profile-nsys was requested, but nsys is unavailable in the runtime image "
+                f"{self.image}. Use an image containing Nsight Systems CLI."
+            )
+        ensure_dir(self.profile_dir)
+        atomic_write_text(self.profile_dir / "nsys_version.txt", completed.stdout.strip() + "\n")
+
+    def _write_profile_manifest(self) -> None:
+        artifacts = sorted(
+            path.name
+            for path in self.profile_dir.glob("*")
+            if path.is_file() and path.name != "profile_manifest.json"
+        )
+        reports = [name for name in artifacts if name.endswith(".nsys-rep")]
+        validation_path = self.profile_dir / "cuda_trace_validation.json"
+        cuda_trace_valid = None
+        if validation_path.exists():
+            try:
+                cuda_trace_valid = bool(json.loads(validation_path.read_text())["valid"])
+            except (json.JSONDecodeError, KeyError, TypeError):
+                cuda_trace_valid = False
+        atomic_write_json(
+            self.profile_dir / "profile_manifest.json",
+            {
+                "profiler": "NVIDIA Nsight Systems",
+                "trace_domains": ["cuda-sw", "nvtx", "osrt"],
+                "server_lifecycle_profiled": True,
+                "expected_report": "server.nsys-rep",
+                "report_complete": bool(reports),
+                "cuda_trace_valid": cuda_trace_valid,
+                "artifacts": artifacts,
+                "captured_at": utc_now(),
+            },
+        )
+
+    def validate_profile_artifacts(self) -> None:
+        if not self.profile_nsys:
+            return
+        reports = sorted(self.profile_dir.glob("*.nsys-rep"))
+        if not reports:
+            raise BenchmarkError(
+                "Nsight Systems did not produce a .nsys-rep file. Inspect profiling/"
+                "profile_manifest.json and server.log."
+            )
+        report = self.profile_dir / "server.nsys-rep"
+        if not report.is_file():
+            report = reports[0]
+        self._validate_nsys_cuda_trace(report)
+
+    def _validate_nsys_cuda_trace(self, report: Path) -> None:
+        """Analyze with the collector image and reject CPU-only Nsight reports."""
+        completed = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{self.profile_dir.resolve()}:/benchmark-profile",
+                "--entrypoint",
+                "/bin/sh",
+                self._runtime_image_reference(),
+                "-lc",
+                "nsys stats --force-export=true "
+                "--report cuda_gpu_kern_sum,cuda_api_sum "
+                f"/benchmark-profile/{report.name}",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=600,
+        )
+        summary = completed.stdout or ""
+        atomic_write_text(self.profile_dir / "cuda_summary.txt", summary)
+        valid = (
+            completed.returncode == 0
+            and "CUDA GPU Kernel Summary" in summary
+            and "CUDA API Summary" in summary
+        )
+        atomic_write_json(
+            self.profile_dir / "cuda_trace_validation.json",
+            {
+                "valid": valid,
+                "report": report.name,
+                "returncode": completed.returncode,
+                "required_summaries": ["CUDA GPU Kernel Summary", "CUDA API Summary"],
+                "validated_at": utc_now(),
+            },
+        )
+        self._write_profile_manifest()
+        if not valid:
+            raise BenchmarkError(
+                "Nsight Systems produced a report without CUDA API and kernel data. "
+                "Inspect profiling/cuda_summary.txt and cuda_trace_validation.json."
+            )
 
     def _runtime_image_reference(self) -> str:
         """Run the exact image ID resolved before the experiment, not a mutable tag."""

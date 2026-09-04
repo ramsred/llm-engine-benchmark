@@ -220,6 +220,93 @@ class ServerArgumentTests(unittest.TestCase):
             self.assertIn("--max_seq_len", args)
             self.assertIn("--enable_chunked_prefill", args)
 
+    def test_nsys_profile_wraps_server_and_mounts_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            revision = "a" * 40
+            server = DockerEngineServer(
+                engine="tensorrt_llm",
+                config=self._config(root),
+                lock={"model": {"commit_sha": revision, "tokenizer_commit_sha": revision}},
+                run_dir=root / "run",
+                skip_image_pull=True,
+                profile_nsys=True,
+            )
+            args = server._build_profiled_server_args(server._build_server_args())
+            command = server._build_docker_command(args)
+
+            self.assertEqual(args[:2], ["nsys", "profile"])
+            self.assertIn("--trace=cuda-sw,nvtx,osrt", args)
+            self.assertIn("--output=/benchmark-profile/server", args)
+            self.assertIn("--stop-signal=SIGINT", command)
+            self.assertIn("--cap-add=SYS_PTRACE", command)
+            self.assertIn(
+                f"{(root / 'run' / 'profiling').resolve()}:/benchmark-profile",
+                command,
+            )
+            self.assertLess(command.index("nsys"), command.index("trtllm-serve"))
+
+    def test_nsys_profile_manifest_detects_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            revision = "a" * 40
+            server = DockerEngineServer(
+                engine="tensorrt_llm",
+                config=self._config(root),
+                lock={"model": {"commit_sha": revision, "tokenizer_commit_sha": revision}},
+                run_dir=root / "run",
+                skip_image_pull=True,
+                profile_nsys=True,
+            )
+            server.profile_dir.mkdir(parents=True)
+            (server.profile_dir / "server.nsys-rep").touch()
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=(
+                    "** CUDA GPU Kernel Summary (cuda_gpu_kern_sum):\n"
+                    "** CUDA API Summary (cuda_api_sum):\n"
+                ),
+            )
+            with mock.patch("subprocess.run", return_value=completed):
+                server._write_profile_manifest()
+                server.validate_profile_artifacts()
+
+            manifest = json.loads(
+                (server.profile_dir / "profile_manifest.json").read_text()
+            )
+            self.assertTrue(manifest["report_complete"])
+            self.assertTrue(manifest["cuda_trace_valid"])
+            self.assertIn("server.nsys-rep", manifest["artifacts"])
+
+    def test_nsys_profile_rejects_report_without_cuda_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            revision = "a" * 40
+            server = DockerEngineServer(
+                engine="tensorrt_llm",
+                config=self._config(root),
+                lock={"model": {"commit_sha": revision, "tokenizer_commit_sha": revision}},
+                run_dir=root / "run",
+                skip_image_pull=True,
+                profile_nsys=True,
+            )
+            server.profile_dir.mkdir(parents=True)
+            (server.profile_dir / "server.nsys-rep").touch()
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="SKIPPED: report does not contain CUDA trace data.\n",
+            )
+            with mock.patch("subprocess.run", return_value=completed):
+                with self.assertRaisesRegex(BenchmarkError, "without CUDA API and kernel data"):
+                    server.validate_profile_artifacts()
+
+            validation = json.loads(
+                (server.profile_dir / "cuda_trace_validation.json").read_text()
+            )
+            self.assertFalse(validation["valid"])
+
     def test_tensorrt_llm_rejects_unsupported_kv_cache_dtype(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

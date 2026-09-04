@@ -1,0 +1,30 @@
+{
+  "benchmark_commit": "2e7675424864d58ba2dedc6e4339fb98e06eeaf2",
+  "budgets": [
+    8192,
+    4096,
+    2048
+  ],
+  "generated_at": "2026-09-04T21:22:35.314642+00:00",
+  "generated_by": "llm_engine_benchmark.prefill_analysis",
+  "profile_runs": {
+    "2048": "results/profiling/tensorrt-llm-cold-c4-budget-2048-confirmation/tensorrt_llm/cold/c4/run_01",
+    "8192": "results/profiling/tensorrt-llm-cold-c4-cuda-sw-trace/tensorrt_llm/cold/c4/run_01"
+  },
+  "source_sha256": {
+    "results/profiling/tensorrt-llm-cold-c4-budget-2048-confirmation/tensorrt_llm/cold/c4/run_01/client_results.json": "ef8b5586497a7beaf6f1208657909fb5a2b3d3203d1bdb8b52a754ff4770fec7",
+    "results/profiling/tensorrt-llm-cold-c4-budget-2048-confirmation/tensorrt_llm/cold/c4/run_01/profiling/server.sqlite": "2ddf89853b8f7a924171fc48cec4a165aa045c9f56869f85d8cbd293eadbf0f7",
+    "results/profiling/tensorrt-llm-cold-c4-cuda-sw-trace/tensorrt_llm/cold/c4/run_01/client_results.json": "02b2f5d72d0c64bf365956fe4c67060571e1df6376e5fe1f194580d671ff4f3f",
+    "results/profiling/tensorrt-llm-cold-c4-cuda-sw-trace/tensorrt_llm/cold/c4/run_01/profiling/server.sqlite": "61d20ad9c1612eb0e85a3e448543ad9790c689e2aa59074a23cc0ca902d20e1b",
+    "results/validation/tensorrt-llm-cold-c4-budget-2048/tensorrt_llm/cold/c4/run_01/client_results.json": "0f4ee69eef4452374224b2f519f23b21ef8f04e26f9e291f528664081749a457",
+    "results/validation/tensorrt-llm-cold-c4-budget-2048/tensorrt_llm/cold/c4/run_02/client_results.json": "d4750897dd0c4e80b132cf727c90a6ad2d488f80c87599d6917a3d7376b93f4e",
+    "results/validation/tensorrt-llm-cold-c4-budget-2048/tensorrt_llm/cold/c4/run_03/client_results.json": "78a1d1f9771c32e71f08870c14d5172c976224319b003b6136232f7aed349847",
+    "results/validation/tensorrt-llm-cold-c4-budget-4096/tensorrt_llm/cold/c4/run_01/client_results.json": "9dc614cbc9b1ba21cf3ff3ff99228951756d036704dc82e20ace3621dcd5c34a",
+    "results/validation/tensorrt-llm-cold-c4-budget-4096/tensorrt_llm/cold/c4/run_02/client_results.json": "ace460ff451bac50a0a5e1e1a8b8fc91c63073e8d3bcd4972cd459da763db5b2",
+    "results/validation/tensorrt-llm-cold-c4-budget-4096/tensorrt_llm/cold/c4/run_03/client_results.json": "65776d6ba421bb4f184a893ab7dff2c067c1537770953b024a649de6c4cb0b33",
+    "results/validation/tensorrt-llm-cold-c4-budget-8192/tensorrt_llm/cold/c4/run_01/client_results.json": "09d0a23e2a91fd99d46d777640edfa8feecc5a893d606845f3e16d543606e4d4",
+    "results/validation/tensorrt-llm-cold-c4-budget-8192/tensorrt_llm/cold/c4/run_02/client_results.json": "531c0fdf8aa131593e6da6869e323d1714f50e254b25cb4b30a9c61aa0d20037",
+    "results/validation/tensorrt-llm-cold-c4-budget-8192/tensorrt_llm/cold/c4/run_03/client_results.json": "3a3a7a26cb8b1bdf7fd19007da1f9e98b5f767f1dbb34c0dd8193c1a6f43645b"
+  },
+  "validation_root": "results/validation"
+}

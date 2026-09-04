@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from llm_engine_benchmark.cli import _build_dry_run_lock, _parse_engines
+from llm_engine_benchmark.cli import _build_dry_run_lock, _parse_engines, build_parser
 
 
 class CliTests(unittest.TestCase):
@@ -20,6 +20,10 @@ class CliTests(unittest.TestCase):
         lock = _build_dry_run_lock(config)
         self.assertEqual(lock["model"]["commit_sha"], "dry-run")
         self.assertEqual(lock["model"]["tokenizer_commit_sha"], "dry-run")
+
+    def test_run_accepts_nsys_profile_flag(self) -> None:
+        args = build_parser().parse_args(["run", "--profile-nsys", "--dry-run"])
+        self.assertTrue(args.profile_nsys)
 
 
 if __name__ == "__main__":

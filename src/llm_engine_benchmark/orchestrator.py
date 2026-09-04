@@ -50,6 +50,7 @@ class RunOptions:
     overwrite: bool = False
     keep_going: bool = False
     dry_run: bool = False
+    profile_nsys: bool = False
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ def run_experiment(
             "sample_limit": options.sample_limit,
             "run_order": options.run_order,
             "dry_run": options.dry_run,
+            "profile_nsys": options.profile_nsys,
         },
         "runs": [spec.__dict__ for spec in plan],
         "preparation_signature": preparation_signature(config, lock),
@@ -144,7 +146,13 @@ def run_experiment(
     atomic_write_json(results_dir / "run_plan.json", plan_payload)
 
     if options.dry_run:
-        _print_dry_run(config, lock, plan, results_dir)
+        _print_dry_run(
+            config,
+            lock,
+            plan,
+            results_dir,
+            profile_nsys=options.profile_nsys,
+        )
         return {"dry_run": True, "planned_runs": len(plan), "plan": str(results_dir / "run_plan.json")}
 
     for mode in options.modes:
@@ -187,7 +195,14 @@ def run_experiment(
                 f"Requested {options.sample_limit} samples but {records_path} contains only "
                 f"{len(selected_records)}"
             )
-        run_signature = _run_signature(config, lock, spec, selected_records, image_digests[spec.engine])
+        run_signature = _run_signature(
+            config,
+            lock,
+            spec,
+            selected_records,
+            image_digests[spec.engine],
+            profile_nsys=options.profile_nsys,
+        )
         action = _prepare_run_directory(
             run_dir,
             signature=run_signature,
@@ -332,6 +347,7 @@ def _execute_one_run(
             "first-request long-context compilation is included in measured behavior."
         ),
         "design_compliant_full_run": _is_full_design(config, options),
+        "profile_nsys": options.profile_nsys,
         "status": "starting",
     }
     atomic_write_json(run_dir / "run_metadata.json", metadata)
@@ -344,6 +360,7 @@ def _execute_one_run(
         lock=lock,
         run_dir=run_dir,
         skip_image_pull=True,
+        profile_nsys=options.profile_nsys,
     )
     server.image_digest = image_digest
     telemetry_cfg = dict(config.get("telemetry", {}))
@@ -496,6 +513,22 @@ def _execute_one_run(
         except Exception:
             pass
         server.stop()
+    if options.profile_nsys:
+        try:
+            server.validate_profile_artifacts()
+        except BenchmarkError as exc:
+            result["valid"] = False
+            validation_errors = list(result.get("validation_errors", []))
+            validation_errors.append(str(exc))
+            result["validation_errors"] = validation_errors
+            atomic_write_json(run_dir / "client_results.json", result)
+            metadata["status"] = "rejected"
+            metadata["client_valid"] = False
+            metadata["validation_errors"] = validation_errors
+            atomic_write_json(run_dir / "run_metadata.json", metadata)
+            raise
+        metadata["nsys_report"] = "profiling/server.nsys-rep"
+        atomic_write_json(run_dir / "run_metadata.json", metadata)
 
 
 def _build_runtime_warmup_prompt(tokenizer) -> str:
@@ -534,7 +567,12 @@ def _prepare_images(
 
 
 def _print_dry_run(
-    config: Mapping[str, Any], lock: Mapping[str, Any], plan: Sequence[RunSpec], results_dir: Path
+    config: Mapping[str, Any],
+    lock: Mapping[str, Any],
+    plan: Sequence[RunSpec],
+    results_dir: Path,
+    *,
+    profile_nsys: bool = False,
 ) -> None:
     print(f"Dry-run plan: {len(plan)} sequential server configurations")
     for spec in plan:
@@ -545,8 +583,11 @@ def _print_dry_run(
             lock=lock,
             run_dir=run_dir,
             skip_image_pull=True,
+            profile_nsys=profile_nsys,
         )
-        args = server._build_server_args()  # Render only; no Docker operation.
+        args = server._build_profiled_server_args(
+            server._build_server_args()
+        )  # Render only; no Docker operation.
         command = server._build_docker_command(args)
         print(
             f"{spec.order_index:02d}. {spec.engine} {spec.mode} c{spec.concurrency} "
@@ -629,6 +670,8 @@ def _run_signature(
     spec: RunSpec,
     records: Sequence[Mapping[str, Any]],
     image_digest: str,
+    *,
+    profile_nsys: bool = False,
 ) -> str:
     material = {
         "preparation_signature": preparation_signature(config, lock),
@@ -638,6 +681,7 @@ def _run_signature(
         "prompt_hashes": [record.get("metadata", {}).get("prompt_sha256") for record in records],
         "image_digest": image_digest,
         "engine_config": config["engines"][spec.engine],
+        "profile_nsys": profile_nsys,
     }
     return sha256_text(json.dumps(material, sort_keys=True, separators=(",", ":")))
 
@@ -659,6 +703,7 @@ def _experiment_scope_signature(
         "sample_limit": options.sample_limit,
         "run_order": options.run_order,
         "telemetry_enabled": options.telemetry_enabled,
+        "profile_nsys": options.profile_nsys,
         "require_server_token_usage": bool(config["project"].get("require_server_token_usage", True)),
         "cooldown_seconds": options.cooldown_seconds,
         "engine_configs": {
