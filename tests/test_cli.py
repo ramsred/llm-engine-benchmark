@@ -25,6 +25,25 @@ class CliTests(unittest.TestCase):
         args = build_parser().parse_args(["run", "--profile-nsys", "--dry-run"])
         self.assertTrue(args.profile_nsys)
 
+    def test_capacity_parses_open_loop_and_admission_options(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "capacity",
+                "--rates",
+                "0.01,0.02",
+                "--arrival-pattern",
+                "poisson",
+                "--max-in-flight",
+                "4",
+                "--queue-limit",
+                "8",
+            ]
+        )
+        self.assertEqual(args.rates, (0.01, 0.02))
+        self.assertEqual(args.arrival_pattern, "poisson")
+        self.assertEqual(args.max_in_flight, 4)
+        self.assertEqual(args.queue_limit, 8)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -68,6 +68,22 @@ per-request cache details; the raw logs and Prometheus deltas remain available.
 present and accepted; otherwise missing and rejected run identifiers are listed
 and the Markdown report is prominently marked `INCOMPLETE`.
 
+## Capacity artifacts
+
+`capacity_run_plan.json` records the offered rates, arrival pattern, admission bounds, SLA targets,
+repetitions, model preparation identity, and run order.
+
+Each capacity run contains `capacity_request_timings.jsonl`, `capacity_results.json`, and
+`capacity_metadata.json`. Request rows preserve scheduled and actual arrival offsets, dispatch lag,
+admission status, queue time, streaming latency, completion status, and output validation evidence.
+
+`capacity_results.json` separates measurement validity from SLA attainment. Queue-full, queue-timeout,
+request-error, and successful outcomes all contribute to the scheduled-request success and rejection
+fractions. Load generation is invalidated when P95 arrival lag exceeds its configured limit.
+
+`capacity_summary.csv` contains one row per rate and repetition. `capacity_report.md` declares a rate
+passing only when every expected repetition is present, valid, and SLA compliant.
+
 
 ## Experiment scoping
 

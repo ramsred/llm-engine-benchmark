@@ -1,0 +1,14 @@
+project:
+  engines: [tensorrt_llm]
+  cache_modes: [cold]
+  concurrency: [4]
+  repetitions: 1
+  samples: 20
+  cooldown_seconds: 60
+
+engines:
+  tensorrt_llm:
+    max_batch_size: 4
+    max_num_tokens: 2048
+    kv_cache_free_gpu_memory_fraction: 0.80
+    kv_cache_dtype: fp8

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from . import __version__
+from .capacity import CapacityOptions, SlaTargets, parse_rates, run_capacity_experiment
 from .config import DEFAULT_CONFIG_PATH, SUPPORTED_ENGINES, load_config
 from .datasets import build_canonical_manifest
 from .environment import run_doctor
@@ -93,6 +94,44 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Profile each inference server with Nsight Systems and retain a .nsys-rep trace",
     )
+
+    capacity = subparsers.add_parser(
+        "capacity",
+        help="Run an open-loop offered-load sweep with bounded admission and SLA checks",
+    )
+    _add_common_config_flags(capacity)
+    _add_preparation_flags(capacity)
+    capacity.add_argument(
+        "--engine",
+        choices=tuple(sorted(SUPPORTED_ENGINES)),
+        default="tensorrt_llm",
+    )
+    capacity.add_argument("--mode", choices=("cold", "warm_shared"), default="cold")
+    capacity.add_argument(
+        "--rates",
+        type=parse_rates,
+        default=parse_rates("0.008,0.012,0.016,0.020,0.024"),
+        help="Comma-separated offered request rates in requests/second",
+    )
+    capacity.add_argument("--requests", type=int, default=20)
+    capacity.add_argument("--repetitions", type=int, default=1)
+    capacity.add_argument("--arrival-pattern", choices=("constant", "poisson"), default="constant")
+    capacity.add_argument("--max-arrival-lag-seconds", type=float, default=1.0)
+    capacity.add_argument("--max-in-flight", type=int, default=4)
+    capacity.add_argument("--queue-limit", type=int, default=8)
+    capacity.add_argument("--queue-timeout-seconds", type=float, default=30.0)
+    capacity.add_argument("--ttft-p95-slo", type=float, default=70.0)
+    capacity.add_argument("--itl-p95-slo", type=float, default=1.5)
+    capacity.add_argument("--e2e-p95-slo", type=float, default=250.0)
+    capacity.add_argument("--queue-p95-slo", type=float, default=10.0)
+    capacity.add_argument("--min-success-fraction", type=float, default=0.99)
+    capacity.add_argument("--max-rejection-fraction", type=float, default=0.01)
+    capacity.add_argument("--cooldown-seconds", type=float, default=None)
+    capacity.add_argument("--skip-image-pull", action="store_true")
+    capacity.add_argument("--no-telemetry", action="store_true")
+    capacity.add_argument("--resume", action="store_true")
+    capacity.add_argument("--overwrite", action="store_true")
+    capacity.add_argument("--dry-run", action="store_true")
 
     report = subparsers.add_parser("report", help="Aggregate completed run artifacts")
     _add_common_config_flags(report)
@@ -275,6 +314,63 @@ def main(argv: Sequence[str] | None = None) -> int:
             paths = generate_report(config["paths"]["results_dir"])
             for label, path in paths.items():
                 print(f"{label}: {path}")
+            return 0
+
+        if args.command == "capacity":
+            if args.resume and args.overwrite:
+                raise BenchmarkError("--resume and --overwrite are mutually exclusive")
+            if args.dry_run:
+                lock_path = Path(str(config["paths"]["lock_file"]))
+                if lock_path.exists():
+                    lock = load_or_create_lock(
+                        config,
+                        refresh=args.refresh_lock,
+                        acquire_sources=False,
+                    )
+                else:
+                    lock = _build_dry_run_lock(config)
+            else:
+                lock, _, _, _ = _prepare(config, args)
+            base_results_dir = Path(str(config["paths"]["results_dir"]))
+            output_dir = (
+                base_results_dir
+                if args.results_dir is not None
+                else base_results_dir / "capacity"
+            )
+            cooldown = (
+                float(args.cooldown_seconds)
+                if args.cooldown_seconds is not None
+                else float(config["project"].get("cooldown_seconds", 0))
+            )
+            options = CapacityOptions(
+                engine=args.engine,
+                mode=args.mode,
+                rates=tuple(args.rates),
+                requests=args.requests,
+                repetitions=args.repetitions,
+                max_in_flight=args.max_in_flight,
+                queue_limit=args.queue_limit,
+                queue_timeout_seconds=args.queue_timeout_seconds,
+                arrival_pattern=args.arrival_pattern,
+                max_arrival_lag_seconds=args.max_arrival_lag_seconds,
+                sla=SlaTargets(
+                    ttft_p95_seconds=args.ttft_p95_slo,
+                    itl_p95_seconds=args.itl_p95_slo,
+                    e2e_p95_seconds=args.e2e_p95_slo,
+                    queue_p95_seconds=args.queue_p95_slo,
+                    min_success_fraction=args.min_success_fraction,
+                    max_rejection_fraction=args.max_rejection_fraction,
+                ),
+                output_dir=output_dir,
+                skip_image_pull=args.skip_image_pull,
+                telemetry_enabled=not args.no_telemetry,
+                cooldown_seconds=cooldown,
+                resume=args.resume,
+                overwrite=args.overwrite,
+                dry_run=args.dry_run,
+            )
+            summary = run_capacity_experiment(config, lock, options=options)
+            print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
 
         if args.command == "run":
