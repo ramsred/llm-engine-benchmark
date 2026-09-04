@@ -1,6 +1,8 @@
 .venv/
 .env
 *.egg-info/
+build/
+dist/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -17,6 +19,8 @@ results/*
 !results/README.md
 !results/summaries/
 !results/summaries/*.csv
+!results/summaries/*.json
+!results/summaries/*.md
 !results/sample/
 !results/sample/*.json
 !results/raw/

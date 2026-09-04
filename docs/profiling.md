@@ -81,3 +81,15 @@ After cold C4 is explained, capture matched cold C1 and warm C4 controls and com
 overlap, launch behavior, and memory pressure across engines.
 
 Do not turn an observed correlation into a root-cause claim until the trace supports it.
+
+## Completed cold-C4 finding
+
+The investigation found a prefill/decode interference mechanism. At an 8192-token budget, the
+longest long-context attention kernel was 474.804 milliseconds and the longest host-side CUDA
+synchronization wait was 5.792 seconds. With a 2048-token budget, these fell to 126.315 milliseconds
+and 1.485 seconds. The corresponding profiled P95 ITL fell from 1.961 seconds to 1.262 seconds.
+
+The causal claim is supported by both a controlled configuration change and the expected change in
+GPU execution duration. See [the prefill-budget case study](prefill-budget-case-study.md). Cold-C1
+and warm-C4 traces remain useful controls but are no longer required to establish this particular
+mechanism.
