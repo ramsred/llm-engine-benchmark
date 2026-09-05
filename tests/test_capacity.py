@@ -15,6 +15,8 @@ from llm_engine_benchmark.capacity import (
     _AdmissionGate,
     _capacity_run_dir,
     _prepare_capacity_run_directory,
+    build_long_context_runtime_warmup,
+    classify_capacity_rates,
     evaluate_sla,
     generate_arrival_offsets,
     generate_capacity_report,
@@ -26,6 +28,9 @@ from llm_engine_benchmark.client import ClientRunOptions
 class CharTokenizer:
     def encode(self, text: str, add_special_tokens: bool = False):
         return [ord(character) for character in text]
+
+    def decode(self, token_ids, skip_special_tokens: bool = False):
+        return "".join(chr(token_id) for token_id in token_ids)
 
 
 def _sla() -> SlaTargets:
@@ -40,6 +45,21 @@ def _sla() -> SlaTargets:
 
 
 class CapacityTests(unittest.TestCase):
+    def test_representative_runtime_warmup_is_exact_and_prefix_disjoint(self) -> None:
+        prompt, metadata = build_long_context_runtime_warmup(
+            tokenizer=CharTokenizer(),
+            target_tokens=512,
+            seed=7,
+            measured_records=[
+                {"sample_id": "a", "prompt": "measured prompt " * 100},
+                {"sample_id": "b", "prompt": "another request " * 100},
+            ],
+        )
+        self.assertEqual(len(CharTokenizer().encode(prompt)), 512)
+        self.assertEqual(metadata["input_tokens"], 512)
+        self.assertTrue(metadata["excluded_from_measurement"])
+        self.assertLess(metadata["maximum_shared_prefix_tokens_checked"], 16)
+
     def test_constant_and_poisson_arrivals_are_reproducible(self) -> None:
         self.assertEqual(
             generate_arrival_offsets(count=3, rate=2.0, pattern="constant", seed=1),
@@ -258,6 +278,56 @@ class CapacityTests(unittest.TestCase):
             report = generate_capacity_report(root, plan, options)
             self.assertEqual(report["capacity_boundary_rps"], 0.01)
             self.assertEqual(report["recommended_safe_capacity_rps"], 0.0075)
+            self.assertEqual(report["decision_status"], "validated_boundary")
+
+    def test_all_passing_rates_are_only_a_lower_bound(self) -> None:
+        rows = [
+            {"offered_request_rate": rate, "valid": True, "sla_pass": True}
+            for rate in (0.01, 0.02)
+            for _ in range(3)
+        ]
+        result = classify_capacity_rates(rows, (0.01, 0.02), 3)
+        self.assertEqual(result["decision_status"], "lower_bound_only")
+        self.assertEqual(result["capacity_lower_bound_rps"], 0.02)
+        self.assertIsNone(result["capacity_boundary_rps"])
+        self.assertIsNone(result["recommended_safe_capacity_rps"])
+
+    def test_non_monotonic_rates_do_not_produce_boundary(self) -> None:
+        rows = [
+            {
+                "offered_request_rate": rate,
+                "valid": True,
+                "sla_pass": passed,
+            }
+            for rate, passed in ((0.01, True), (0.02, False), (0.03, True))
+            for _ in range(3)
+        ]
+        result = classify_capacity_rates(rows, (0.01, 0.02, 0.03), 3)
+        self.assertEqual(result["decision_status"], "inconclusive_non_monotonic")
+        self.assertTrue(result["non_monotonic"])
+        self.assertIsNone(result["capacity_boundary_rps"])
+        self.assertEqual(result["rates_to_repeat"], [0.02, 0.03])
+
+    def test_mixed_repetitions_are_unstable(self) -> None:
+        rows = [
+            {"offered_request_rate": 0.01, "valid": True, "sla_pass": value}
+            for value in (True, False, True)
+        ]
+        result = classify_capacity_rates(rows, (0.01,), 3)
+        self.assertEqual(result["decision_status"], "inconclusive_unstable")
+        self.assertEqual(result["rate_statuses"]["0.01"]["status"], "UNSTABLE")
+        self.assertIsNone(result["capacity_boundary_rps"])
+
+    def test_missing_repetition_is_incomplete(self) -> None:
+        rows = [
+            {"offered_request_rate": 0.01, "valid": True, "sla_pass": True}
+            for _ in range(2)
+        ]
+        result = classify_capacity_rates(rows, (0.01,), 3)
+        self.assertEqual(
+            result["decision_status"], "inconclusive_incomplete_or_invalid"
+        )
+        self.assertEqual(result["rates_to_repeat"], [0.01])
 
 
 if __name__ == "__main__":

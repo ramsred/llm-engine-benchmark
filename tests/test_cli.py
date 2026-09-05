@@ -37,12 +37,18 @@ class CliTests(unittest.TestCase):
                 "4",
                 "--queue-limit",
                 "8",
+                "--runtime-state",
+                "cold-start",
+                "--runtime-warmup-output-tokens",
+                "16",
             ]
         )
         self.assertEqual(args.rates, (0.01, 0.02))
         self.assertEqual(args.arrival_pattern, "poisson")
         self.assertEqual(args.max_in_flight, 4)
         self.assertEqual(args.queue_limit, 8)
+        self.assertEqual(args.runtime_state, "cold-start")
+        self.assertEqual(args.runtime_warmup_output_tokens, 16)
 
 
 if __name__ == "__main__":

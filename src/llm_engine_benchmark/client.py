@@ -659,6 +659,7 @@ def send_warmup_requests(
     request_extra: Mapping[str, Any],
     timeout_seconds: float,
     api_key: str | None = None,
+    max_tokens: int = 1,
 ) -> list[dict[str, Any]]:
     return asyncio.run(
         _send_warmups_async(
@@ -669,6 +670,7 @@ def send_warmup_requests(
             request_extra=request_extra,
             timeout_seconds=timeout_seconds,
             api_key=api_key,
+            max_tokens=max_tokens,
         )
     )
 
@@ -682,7 +684,10 @@ async def _send_warmups_async(
     request_extra: Mapping[str, Any],
     timeout_seconds: float,
     api_key: str | None,
+    max_tokens: int,
 ) -> list[dict[str, Any]]:
+    if max_tokens <= 0:
+        raise BenchmarkError("Warm-up max_tokens must be positive")
     timeout = aiohttp.ClientTimeout(total=timeout_seconds, sock_read=timeout_seconds)
     results: list[dict[str, Any]] = []
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -693,7 +698,7 @@ async def _send_warmups_async(
                 base_url=base_url,
                 model=model,
                 prompt=prompt,
-                max_tokens=1,
+                max_tokens=max_tokens,
                 request_extra=request_extra,
                 api_key=api_key,
                 tokenizer=tokenizer,
@@ -702,6 +707,9 @@ async def _send_warmups_async(
                 {
                     "label": label,
                     "duration_seconds": time.perf_counter() - started,
+                    "input_tokens": len(encode(tokenizer, prompt)),
+                    "expected_output_tokens": max_tokens,
+                    "ttft_seconds": response.get("first_token_seconds"),
                     "output_tokens": (
                         response.get("server_reported_completion_tokens")
                         if response.get("server_reported_completion_tokens") is not None

@@ -115,6 +115,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     capacity.add_argument("--requests", type=int, default=20)
     capacity.add_argument("--repetitions", type=int, default=1)
+    capacity.add_argument(
+        "--runtime-state",
+        choices=("steady", "cold-start"),
+        default="steady",
+        help="Warm the exact long-context execution path, or deliberately measure its cold start",
+    )
+    capacity.add_argument(
+        "--runtime-warmup-output-tokens",
+        type=int,
+        default=32,
+        help="Generated tokens in the unmeasured representative steady-state warm-up",
+    )
     capacity.add_argument("--arrival-pattern", choices=("constant", "poisson"), default="constant")
     capacity.add_argument("--max-arrival-lag-seconds", type=float, default=1.0)
     capacity.add_argument("--max-in-flight", type=int, default=4)
@@ -362,6 +374,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_rejection_fraction=args.max_rejection_fraction,
                 ),
                 output_dir=output_dir,
+                runtime_state=args.runtime_state,
+                runtime_warmup_output_tokens=args.runtime_warmup_output_tokens,
                 skip_image_pull=args.skip_image_pull,
                 telemetry_enabled=not args.no_telemetry,
                 cooldown_seconds=cooldown,

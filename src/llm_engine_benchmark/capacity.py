@@ -19,7 +19,13 @@ import aiohttp
 from .client import ClientRunOptions, _aggregate_results, _bounded_request, send_warmup_requests
 from .environment import capture_environment
 from .metrics import write_metrics_diff
-from .normalize import load_pinned_tokenizer, preparation_signature
+from .normalize import (
+    encode,
+    ensure_token_capacity,
+    fit_variable_segment,
+    load_pinned_tokenizer,
+    preparation_signature,
+)
 from .orchestrator import (
     _build_runtime_warmup_prompt,
     select_stratified_records,
@@ -77,6 +83,8 @@ class CapacityOptions:
     max_arrival_lag_seconds: float
     sla: SlaTargets
     output_dir: Path
+    runtime_state: str = "steady"
+    runtime_warmup_output_tokens: int = 32
     skip_image_pull: bool = False
     telemetry_enabled: bool = True
     cooldown_seconds: float = 0.0
@@ -90,6 +98,12 @@ class CapacitySpec:
     offered_request_rate: float
     repetition: int
     order_index: int
+
+
+CAPACITY_RUNTIME_WARMUP_PREFIX = (
+    "[CAPACITY-RUNTIME-WARMUP-DO-NOT-CACHE-AS-MEASURED-PREFIX] "
+    "This deterministic document exists only to initialize the long-context execution path. "
+)
 
 
 class _AdmissionGate:
@@ -158,6 +172,71 @@ def generate_arrival_offsets(
     for _ in range(1, count):
         offsets.append(offsets[-1] + rng.expovariate(rate))
     return offsets
+
+
+def build_long_context_runtime_warmup(
+    *,
+    tokenizer,
+    target_tokens: int,
+    seed: int,
+    measured_records: Sequence[Mapping[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    """Build an exact-length prompt whose prefix is disjoint from measured traffic."""
+    source, source_metadata = ensure_token_capacity(
+        tokenizer,
+        CAPACITY_RUNTIME_WARMUP_PREFIX,
+        required_tokens=target_tokens + 4096,
+        seed=seed,
+        label="capacity-runtime-warmup",
+        min_chars=max(4096, target_tokens * 6),
+    )
+    prompt, token_ids, fit_metadata = fit_variable_segment(
+        tokenizer,
+        prefix=CAPACITY_RUNTIME_WARMUP_PREFIX,
+        segment_source=source,
+        suffix="\nEnd of runtime initialization document. Return only READY.",
+        target_tokens=target_tokens,
+        label="capacity-runtime-warmup",
+    )
+    if len(token_ids) != target_tokens:
+        raise BenchmarkError(
+            f"Long-context runtime warm-up has {len(token_ids)} tokens; "
+            f"expected {target_tokens}"
+        )
+
+    warmup_head = token_ids[:64]
+    maximum_shared_head = 0
+    matching_sample: str | None = None
+    for record in measured_records:
+        measured_head = encode(tokenizer, str(record["prompt"])[:8192])[:64]
+        shared = _common_prefix_length(warmup_head, measured_head)
+        if shared > maximum_shared_head:
+            maximum_shared_head = shared
+            matching_sample = str(record["sample_id"])
+    if maximum_shared_head >= 16:
+        raise BenchmarkError(
+            "Long-context runtime warm-up unexpectedly shares a measurable prefix "
+            f"({maximum_shared_head} tokens) with {matching_sample}"
+        )
+    return prompt, {
+        "label": "long_context_runtime_warmup",
+        "input_tokens": len(token_ids),
+        "prompt_sha256": sha256_text(prompt),
+        "maximum_shared_prefix_tokens_checked": maximum_shared_head,
+        "prefix_check_tokens": len(warmup_head),
+        "excluded_from_measurement": True,
+        "source": source_metadata,
+        "fit": fit_metadata,
+    }
+
+
+def _common_prefix_length(left: Sequence[int], right: Sequence[int]) -> int:
+    length = 0
+    for left_token, right_token in zip(left, right, strict=False):
+        if left_token != right_token:
+            break
+        length += 1
+    return length
 
 
 def run_capacity_client(
@@ -472,6 +551,8 @@ def run_capacity_experiment(
             "queue_timeout_seconds": options.queue_timeout_seconds,
         },
         "arrival_pattern": options.arrival_pattern,
+        "runtime_state": options.runtime_state,
+        "runtime_warmup_output_tokens": options.runtime_warmup_output_tokens,
         "sla": asdict(options.sla),
         "runs": [asdict(spec) for spec in plan],
         "preparation_signature": preparation_signature(config, lock),
@@ -502,6 +583,17 @@ def run_capacity_experiment(
     capture_environment(config, lock, output_dir)
     tokenizer = load_pinned_tokenizer(config, lock)
     runtime_warmup_prompt = _build_runtime_warmup_prompt(tokenizer)
+    long_context_warmup_prompt: str | None = None
+    long_context_warmup_metadata: dict[str, Any] | None = None
+    if options.runtime_state == "steady":
+        long_context_warmup_prompt, long_context_warmup_metadata = (
+            build_long_context_runtime_warmup(
+                tokenizer=tokenizer,
+                target_tokens=int(config["project"]["input_tokens"]),
+                seed=int(config["project"]["seed"]) + 91_173,
+                measured_records=selected_records,
+            )
+        )
     image_probe = DockerEngineServer(
         engine=options.engine,
         config=config,
@@ -545,6 +637,8 @@ def run_capacity_experiment(
                 lock=lock,
                 tokenizer=tokenizer,
                 runtime_warmup_prompt=runtime_warmup_prompt,
+                long_context_warmup_prompt=long_context_warmup_prompt,
+                long_context_warmup_metadata=long_context_warmup_metadata,
                 records_path=records_path,
                 selected_records=selected_records,
                 warmup_prefix_path=warmup_prefix_path,
@@ -590,6 +684,8 @@ def _execute_capacity_run(
     lock: Mapping[str, Any],
     tokenizer,
     runtime_warmup_prompt: str,
+    long_context_warmup_prompt: str | None,
+    long_context_warmup_metadata: Mapping[str, Any] | None,
     records_path: Path,
     selected_records: list[dict[str, Any]],
     warmup_prefix_path: Path,
@@ -623,6 +719,17 @@ def _execute_capacity_run(
         "image_digest": image_digest,
         "model": lock["model"],
         "capacity_options": _capacity_option_payload(options),
+        "runtime_state": options.runtime_state,
+        "runtime_warmup_tokens": len(encode(tokenizer, runtime_warmup_prompt)),
+        "runtime_warmup_sha256": sha256_text(runtime_warmup_prompt),
+        "long_context_runtime_warmup": long_context_warmup_metadata,
+        "runtime_warmup_limitation": (
+            "An exact representative long-context request initializes steady-state "
+            "execution paths before measurement and is excluded from results."
+            if options.runtime_state == "steady"
+            else "Only the unrelated 32-token runtime warm-up runs before measurement; "
+            "first-request long-context initialization remains measured by design."
+        ),
         "status": "starting",
     }
     atomic_write_json(run_dir / "capacity_metadata.json", metadata)
@@ -650,7 +757,43 @@ def _execute_capacity_run(
         metadata["runtime_versions"] = server.capture_runtime_versions()
         atomic_write_json(run_dir / "capacity_metadata.json", metadata)
 
-        warmups: list[tuple[str, str]] = [("runtime_warmup", runtime_warmup_prompt)]
+        warmup_results = send_warmup_requests(
+            base_url=server.base_url,
+            model=server.api_model,
+            prompts=[("short_runtime_warmup", runtime_warmup_prompt)],
+            tokenizer=tokenizer,
+            request_extra=request_extra,
+            timeout_seconds=float(config["project"]["request_timeout_seconds"]),
+        )
+        long_context_result: dict[str, Any] | None = None
+        if long_context_warmup_prompt is not None:
+            long_context_result = send_warmup_requests(
+                base_url=server.base_url,
+                model=server.api_model,
+                prompts=[("long_context_runtime_warmup", long_context_warmup_prompt)],
+                tokenizer=tokenizer,
+                request_extra=request_extra,
+                timeout_seconds=float(config["project"]["request_timeout_seconds"]),
+                max_tokens=options.runtime_warmup_output_tokens,
+            )[0]
+            expected_input = int(config["project"]["input_tokens"])
+            if long_context_result["input_tokens"] != expected_input:
+                raise BenchmarkError(
+                    "Representative runtime warm-up input-token mismatch: "
+                    f"{long_context_result['input_tokens']} != {expected_input}"
+                )
+            if long_context_result["output_tokens"] != options.runtime_warmup_output_tokens:
+                raise BenchmarkError(
+                    "Representative runtime warm-up output-token mismatch: "
+                    f"{long_context_result['output_tokens']} != "
+                    f"{options.runtime_warmup_output_tokens}"
+                )
+            atomic_write_json(
+                run_dir / "long_context_warmup.json",
+                {**dict(long_context_warmup_metadata or {}), "result": long_context_result},
+            )
+            warmup_results.append(long_context_result)
+        prefix_warmups: list[tuple[str, str]] = []
         if options.mode == "warm_shared":
             selected_groups = {
                 str(row["group_id"])
@@ -664,22 +807,28 @@ def _execute_capacity_run(
             missing = selected_groups - set(warmup_by_group)
             if missing:
                 raise BenchmarkError(f"Missing warm-up prompts for groups: {sorted(missing)}")
-            warmups.extend(
+            prefix_warmups.extend(
                 (f"prefix_warmup:{group}", warmup_by_group[group])
                 for group in sorted(selected_groups)
+            )
+        if prefix_warmups:
+            warmup_results.extend(
+                send_warmup_requests(
+                    base_url=server.base_url,
+                    model=server.api_model,
+                    prompts=prefix_warmups,
+                    tokenizer=tokenizer,
+                    request_extra=request_extra,
+                    timeout_seconds=float(config["project"]["request_timeout_seconds"]),
+                )
             )
         atomic_write_json(
             run_dir / "warmup_results.json",
             {
                 "cache_mode": options.mode,
-                "results": send_warmup_requests(
-                    base_url=server.base_url,
-                    model=server.api_model,
-                    prompts=warmups,
-                    tokenizer=tokenizer,
-                    request_extra=request_extra,
-                    timeout_seconds=float(config["project"]["request_timeout_seconds"]),
-                ),
+                "runtime_state": options.runtime_state,
+                "completed_at": utc_now(),
+                "results": warmup_results,
             },
         )
         server.snapshot_metrics("metrics_before.prom")
@@ -785,21 +934,9 @@ def generate_capacity_report(
         writer.writeheader()
         writer.writerows(rows)
 
-    rate_passes = {
-        rate: (
-            len([row for row in rows if row["offered_request_rate"] == rate])
-            == options.repetitions
-            and all(
-                row["valid"] and row["sla_pass"]
-                for row in rows
-                if row["offered_request_rate"] == rate
-            )
-        )
-        for rate in options.rates
-    }
-    passing_rates = [rate for rate, passed in rate_passes.items() if passed]
-    boundary = max(passing_rates) if passing_rates else None
-    safe_capacity = boundary * 0.75 if boundary is not None else None
+    decision = classify_capacity_rates(rows, options.rates, options.repetitions)
+    boundary = decision["capacity_boundary_rps"]
+    safe_capacity = decision["recommended_safe_capacity_rps"]
     report_path = output_dir / "capacity_report.md"
     lines = [
         "# SLA-Constrained Capacity Report",
@@ -809,6 +946,7 @@ def generate_capacity_report(
         f"- Arrival pattern: `{options.arrival_pattern}`",
         f"- Requests per run: {options.requests}",
         f"- Repetitions per rate: {options.repetitions}",
+        f"- Runtime state: `{options.runtime_state}`",
         f"- P95 TTFT / ITL / E2E SLA: {options.sla.ttft_p95_seconds:g} / "
         f"{options.sla.itl_p95_seconds:g} / {options.sla.e2e_p95_seconds:g} seconds",
         f"- P95 admission queue SLA: {options.sla.queue_p95_seconds:g} seconds",
@@ -836,13 +974,28 @@ def generate_capacity_report(
             f"{_format_seconds(row['e2e_p95_seconds'])} | "
             f"{_format_seconds(row['queue_p95_seconds'])} |"
         )
+    lines.extend(
+        [
+            "",
+            "## Rate classification",
+            "",
+            "| Offered RPS | Status | Valid | Pass | Fail |",
+            "| ---: | :---: | ---: | ---: | ---: |",
+        ]
+    )
+    for rate in sorted(options.rates):
+        item = decision["rate_statuses"][_rate_key(rate)]
+        lines.append(
+            f"| {rate:.6f} | **{item['status']}** | {item['valid_runs']} | "
+            f"{item['passing_runs']} | {item['failing_runs']} |"
+        )
     lines.extend(["", "## Decision", ""])
-    if boundary is None:
-        lines.append("No tested offered-load point satisfied every SLA in every repetition.")
-    else:
+    if decision["decision_status"] == "validated_boundary":
         lines.extend(
             [
                 f"- Validated capacity boundary: **{boundary:.6f} requests/second**.",
+                "- First stable failing rate: "
+                f"**{decision['next_failing_rate_rps']:.6f} requests/second**.",
                 (
                     "- Suggested 25% headroom operating point: "
                     f"**{safe_capacity:.6f} requests/second**."
@@ -850,14 +1003,140 @@ def generate_capacity_report(
                 "- Validate burst recovery and N+1 failover before production deployment.",
             ]
         )
+    elif decision["decision_status"] == "lower_bound_only":
+        lines.append(
+            "All tested rates passed. Capacity is **at least "
+            f"{decision['capacity_lower_bound_rps']:.6f} RPS**; "
+            "test a higher rate before claiming a boundary or applying a headroom recommendation."
+        )
+    elif decision["decision_status"] == "below_tested_range":
+        lines.append(
+            "The lowest tested rate failed consistently. Capacity is below the tested range; "
+            "add lower rates."
+        )
+    else:
+        lines.append(
+            "No capacity boundary is claimed because the rate sweep is incomplete, invalid, "
+            "unstable, or non-monotonic. Repeat the identified rates before making a "
+            "production decision."
+        )
+        if decision["rates_to_repeat"]:
+            rendered = ", ".join(f"{rate:.6f}" for rate in decision["rates_to_repeat"])
+            lines.append(f"- Rates to repeat: {rendered} RPS.")
     atomic_write_text(report_path, "\n".join(lines) + "\n")
     return {
-        "capacity_boundary_rps": boundary,
-        "recommended_safe_capacity_rps": safe_capacity,
-        "rate_passes": {str(rate): passed for rate, passed in rate_passes.items()},
+        **decision,
         "summary_csv": str(csv_path),
         "report": str(report_path),
     }
+
+
+def classify_capacity_rates(
+    rows: Sequence[Mapping[str, Any]],
+    rates: Sequence[float],
+    repetitions: int,
+) -> dict[str, Any]:
+    """Classify an ordered sweep without inventing a boundary from noisy evidence."""
+    ordered_rates = sorted(rates)
+    rate_statuses: dict[str, dict[str, Any]] = {}
+    statuses: list[str] = []
+    for rate in ordered_rates:
+        rate_rows = [row for row in rows if float(row["offered_request_rate"]) == rate]
+        valid_rows = [row for row in rate_rows if bool(row.get("valid"))]
+        passing = [row for row in valid_rows if bool(row.get("sla_pass"))]
+        failing = [row for row in valid_rows if not bool(row.get("sla_pass"))]
+        if len(rate_rows) != repetitions:
+            status = "INCOMPLETE"
+        elif len(valid_rows) != repetitions:
+            status = "INVALID"
+        elif len(passing) == repetitions:
+            status = "PASS"
+        elif len(failing) == repetitions:
+            status = "FAIL"
+        else:
+            status = "UNSTABLE"
+        statuses.append(status)
+        rate_statuses[_rate_key(rate)] = {
+            "status": status,
+            "observed_runs": len(rate_rows),
+            "expected_runs": repetitions,
+            "valid_runs": len(valid_rows),
+            "passing_runs": len(passing),
+            "failing_runs": len(failing),
+        }
+
+    initial_pass_count = 0
+    for status in statuses:
+        if status != "PASS":
+            break
+        initial_pass_count += 1
+    highest_contiguous = (
+        ordered_rates[initial_pass_count - 1] if initial_pass_count else None
+    )
+    boundary: float | None = None
+    next_failing: float | None = None
+    lower_bound: float | None = None
+    decision_status: str
+    repeat_rates: list[float] = []
+
+    if statuses and all(status == "PASS" for status in statuses):
+        decision_status = "lower_bound_only"
+        lower_bound = ordered_rates[-1]
+    elif any(status in {"INCOMPLETE", "INVALID"} for status in statuses):
+        decision_status = "inconclusive_incomplete_or_invalid"
+        repeat_rates = [
+            rate for rate, status in zip(ordered_rates, statuses, strict=True)
+            if status in {"INCOMPLETE", "INVALID"}
+        ]
+    elif any(
+        status == "PASS" for status in statuses[initial_pass_count + 1 :]
+    ):
+        decision_status = "inconclusive_non_monotonic"
+        repeat_rates = [
+            rate for rate, status in zip(ordered_rates, statuses, strict=True)
+            if status != "PASS"
+        ] + [
+            rate
+            for rate, status in zip(
+                ordered_rates[initial_pass_count + 1 :],
+                statuses[initial_pass_count + 1 :],
+                strict=True,
+            )
+            if status == "PASS"
+        ]
+        repeat_rates = sorted(set(repeat_rates))
+    elif "UNSTABLE" in statuses:
+        decision_status = "inconclusive_unstable"
+        repeat_rates = [
+            rate
+            for rate, status in zip(ordered_rates, statuses, strict=True)
+            if status == "UNSTABLE"
+        ]
+    elif statuses and statuses[0] == "FAIL":
+        decision_status = "below_tested_range"
+        next_failing = ordered_rates[0]
+    elif initial_pass_count and statuses[initial_pass_count] == "FAIL":
+        decision_status = "validated_boundary"
+        boundary = ordered_rates[initial_pass_count - 1]
+        next_failing = ordered_rates[initial_pass_count]
+    else:
+        decision_status = "inconclusive"
+
+    return {
+        "decision_status": decision_status,
+        "capacity_boundary_rps": boundary,
+        "capacity_lower_bound_rps": lower_bound,
+        "highest_contiguous_passing_rps": highest_contiguous,
+        "next_failing_rate_rps": next_failing,
+        "recommended_safe_capacity_rps": boundary * 0.75 if boundary is not None else None,
+        "non_monotonic": decision_status == "inconclusive_non_monotonic",
+        "rates_to_repeat": repeat_rates,
+        "rate_statuses": rate_statuses,
+    }
+
+
+def _rate_key(rate: float) -> str:
+    return f"{rate:.12g}"
 
 
 def _format_seconds(value: Any) -> str:
@@ -947,6 +1226,8 @@ def _capacity_signature(
 def _capacity_option_payload(options: CapacityOptions) -> dict[str, Any]:
     return {
         "requests": options.requests,
+        "runtime_state": options.runtime_state,
+        "runtime_warmup_output_tokens": options.runtime_warmup_output_tokens,
         "max_in_flight": options.max_in_flight,
         "queue_limit": options.queue_limit,
         "queue_timeout_seconds": options.queue_timeout_seconds,
@@ -961,6 +1242,10 @@ def _validate_capacity_options(options: CapacityOptions) -> None:
         raise BenchmarkError(f"Unsupported capacity engine: {options.engine}")
     if options.mode not in {"cold", "warm_shared"}:
         raise BenchmarkError("Capacity mode must be cold or warm_shared")
+    if options.runtime_state not in {"steady", "cold-start"}:
+        raise BenchmarkError("Runtime state must be steady or cold-start")
+    if options.runtime_warmup_output_tokens <= 0:
+        raise BenchmarkError("Runtime warm-up output tokens must be positive")
     if not options.rates or any(rate <= 0 or not math.isfinite(rate) for rate in options.rates):
         raise BenchmarkError("Capacity rates must be finite positive numbers")
     if len(set(options.rates)) != len(options.rates):

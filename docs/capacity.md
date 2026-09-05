@@ -7,8 +7,12 @@ sustain while meeting explicit latency, success, rejection, and queueing objecti
 different from the fixed-concurrency benchmark: arrivals occur on an independent clock even while
 the server is busy.
 
-Each cold load point starts a fresh server. This prevents an earlier rate from warming cache state
-for a later rate and keeps the comparison reproducible.
+Each load point starts a fresh server. By default, the harness then sends one unmeasured prompt at
+the configured input length (120K here) and generates 32 tokens. This initializes representative
+long-context kernels, autotuning, CUDA graphs, and memory paths before steady-state measurement. Its
+distinct deterministic prefix is checked against measured requests to prevent accidental prefix-cache
+reuse. Use `--runtime-state cold-start` only when first-request initialization latency is the subject
+of the experiment.
 
 ## Initial 120K latency profile
 
@@ -78,9 +82,14 @@ requested traffic accurately.
 
 ## Capacity decision
 
-A rate passes only when all repetitions are valid and satisfy every SLA check. The report selects
-the highest passing rate as the measured boundary and recommends 75% of that rate as the initial
-operating point with headroom.
+A rate is `PASS` only when all repetitions are present, valid, and satisfy every SLA check. A rate is
+`FAIL` only when every valid repetition fails; mixed repetitions are `UNSTABLE`. Missing or invalid
+runs are classified separately.
+
+The report claims a boundary only for a contiguous low-to-high sequence of passing rates followed by
+a stable failing rate. If every rate passes, the highest rate is only a lower bound. If a higher rate
+passes after a lower rate fails, the sweep is non-monotonic and inconclusive. The 25% headroom value is
+emitted only for a validated boundary.
 
 Generated artifacts include:
 
@@ -89,6 +98,7 @@ Generated artifacts include:
 - `capacity_results.json`: one load point's measurements and SLA checks;
 - `capacity_summary.csv`: compact row for every rate and repetition;
 - `capacity_report.md`: capacity boundary and 25% headroom recommendation;
+- `long_context_warmup.json`: exact prompt-length, prefix-isolation, timing and output evidence;
 - server logs, metrics, environment capture and host/GPU telemetry.
 
 The first implementation establishes single-worker steady-load capacity. Burst recovery,
