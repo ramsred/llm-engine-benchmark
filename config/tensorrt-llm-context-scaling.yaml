@@ -1,0 +1,13 @@
+# Layered on default.yaml. Input lengths are selected by the standalone runner.
+# Keep the server context ceiling fixed across cells to isolate input-length effects.
+project:
+  engines: [tensorrt_llm]
+  cache_modes: [cold]
+  output_tokens: 512
+  context_length: 131072
+engines:
+  tensorrt_llm:
+    max_batch_size: 4
+    max_num_tokens: 2048
+    kv_cache_free_gpu_memory_fraction: 0.80
+    kv_cache_dtype: fp8

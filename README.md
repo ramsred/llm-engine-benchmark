@@ -116,6 +116,7 @@ accepted run JSON + request timings
 - [Profiling plan](docs/profiling.md)
 - [Prefill-budget case study](docs/prefill-budget-case-study.md)
 - [SLA-constrained capacity runbook](docs/capacity.md)
+- [Context-length characterization runbook](docs/context-scaling.md)
 - [Fairness and limitations](docs/fairness-and-limitations.md)
 - [Production recommendations](docs/production-recommendations.md)
 - [Reproducibility and implementation details](docs/reproducibility.md)
@@ -142,7 +143,7 @@ The repository excludes model weights, Hugging Face caches, TensorRT engines, se
 - [x] Nsight Systems capture integration
 - [x] Profiler-backed root cause for the TensorRT-LLM cold-C4 ITL anomaly
 - [ ] TensorRT-LLM through Triton
-- [ ] Context scaling: 8K, 32K, 64K, 120K
+- [ ] Context scaling: 8K, 32K, 64K, 120K ([isolated workflow implemented](docs/context-scaling.md); GPU validation pending)
 - [x] SLA-constrained throughput with [validated production capacity evidence](results/summaries/tensorrt-llm-capacity-analysis.md)
 
 ## Authorship and citation
