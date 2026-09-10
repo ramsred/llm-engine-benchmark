@@ -25,7 +25,13 @@ from .datasets import _canonical_manifest_reuse_error, manifest_signature
 from .environment import capture_environment
 from .locking import _validate_lock, _validate_lock_against_config
 from .metrics import write_metrics_diff
-from .normalize import _build_cold_records, encode, load_pinned_tokenizer
+from .normalize import (
+    _build_cold_records,
+    encode,
+    fit_variable_segment,
+    instruction_suffix_with_budget,
+    load_pinned_tokenizer,
+)
 from .orchestrator import select_stratified_records
 from .server import DockerEngineServer
 from .telemetry import TelemetrySession
@@ -38,6 +44,7 @@ from .util import (
     redact_mapping,
     sha256_file,
     sha256_text,
+    sha256_token_ids,
     utc_now,
     write_jsonl,
 )
@@ -102,8 +109,54 @@ def build_context_plan(config: dict, options: ContextOptions) -> list[ContextCel
     ]
 
 
+def build_context_records(config: dict, tokenizer, sources: list[dict]) -> list[dict]:
+    """Add an early unique prefix without changing the legacy cold-prompt builder.
+
+    The canonical builder starts every prompt with the same descriptive header.
+    A unique sample ID later in that header does not prevent reuse of its first
+    eight tokens. Put deterministic per-sample entropy before any common text,
+    then refit only the variable body to retain the exact length and task suffix.
+    """
+    records = _build_cold_records(config, tokenizer, sources)
+    target = int(config["project"]["input_tokens"])
+    for record, source in zip(records, sources, strict=True):
+        suffix, _ = instruction_suffix_with_budget(config, tokenizer, source)
+        old_prompt = record["prompt"]
+        if not old_prompt.endswith(suffix):
+            raise BenchmarkError("Cannot preserve instruction suffix during context prefix refit")
+        nonce = sha256_text(
+            json.dumps(
+                {
+                    "format": "context-prefix-v2",
+                    "seed": int(config["project"]["seed"]),
+                    "sample_id": record["sample_id"],
+                },
+                sort_keys=True,
+            )
+        )
+        prompt, tokens, fit = fit_variable_segment(
+            tokenizer,
+            prefix=nonce + "\n",
+            segment_source=old_prompt[: -len(suffix)],
+            suffix=suffix,
+            target_tokens=target,
+            label=f"context-prefix:{record['sample_id']}",
+        )
+        record["prompt"] = prompt
+        record["prompt_tokens"] = len(tokens)
+        record["metadata"].update(
+            {
+                "context_prompt_format_version": 2,
+                "context_prefix_refit": fit,
+                "prompt_sha256": sha256_text(prompt),
+                "first_256_token_sha256": sha256_token_ids(tokens[:256]),
+            }
+        )
+    return records
+
+
 def validate_prompt_set(tokenizer, records: list[dict], target: int) -> dict:
-    """Check exact retokenization and reject shared 32-token prefixes.
+    """Check exact retokenization and reject shared eight-token prefixes.
 
     This is protocol evidence, not proof of engine cache hits/misses. Actual
     cached-token usage, when available, is checked separately after execution.
@@ -115,13 +168,13 @@ def validate_prompt_set(tokenizer, records: list[dict], target: int) -> dict:
         tokens = encode(tokenizer, record["prompt"])
         if len(tokens) != target or record["prompt_tokens"] != target:
             raise BenchmarkError(f"Incorrect token count: {record['sample_id']}")
-        head = tuple(tokens[:32])
+        head = tuple(tokens[:8])
         if head in heads or record["sample_id"] in ids:
-            raise BenchmarkError("Duplicate sample ID or shared 32-token prefix")
+            raise BenchmarkError("Duplicate sample ID or shared 8-token prefix")
         heads.add(head)
         ids.add(record["sample_id"])
         hashes[record["sample_id"]] = sha256_text(record["prompt"])
-    return {"input_tokens": target, "unique_prefix_check_tokens": 32, "prompt_sha256": hashes}
+    return {"input_tokens": target, "unique_prefix_check_tokens": 8, "prompt_sha256": hashes}
 
 
 def load_sources(config: dict) -> tuple[dict, list[dict], dict]:
@@ -169,7 +222,10 @@ def accept_result(result: dict, expected: int) -> None:
     if result.get("server_reported_prompt_token_coverage_requests") != expected:
         raise BenchmarkError("Server input-token usage is required for every request")
     if result.get("server_reported_cached_prompt_tokens_total", 0) != 0:
-        raise BenchmarkError("Observed prefix-cache reuse in a cold characterization run")
+        cached = result["server_reported_cached_prompt_tokens_total"]
+        raise BenchmarkError(
+            f"Observed prefix-cache reuse in a cold characterization run: {cached} cached tokens"
+        )
 
 
 def observed_concurrency(timings: Path) -> int:
@@ -209,6 +265,7 @@ def execute_cell(config, lock, tokenizer, cell, options, prepared, digest, root)
         "started_at": utc_now(),
         "status": "starting",
         "profile_nsys": options.profile_nsys,
+        "context_prompt_format_version": 2,
         "image_digest": digest,
         "warmup_excluded_from_measurement": True,
         "warmup_waves": options.warmup_waves,
@@ -415,6 +472,7 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
         "runs": [asdict(cell) for cell in plan],
         "options": {**asdict(options), "output_dir": str(root)},
         "scope": "context_characterization_no_quality_or_production_capacity_claim",
+        "context_prompt_format_version": 2,
     }
     try:
         payload["git_commit"] = subprocess.check_output(
@@ -449,8 +507,8 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
         ]
         for length in options.lengths:
             derived = cell_config(config, length)
-            measured = _build_cold_records(derived, tokenizer, selected)
-            warmups = _build_cold_records(derived, tokenizer, warm_sources)
+            measured = build_context_records(derived, tokenizer, selected)
+            warmups = build_context_records(derived, tokenizer, warm_sources)
             checks = validate_prompt_set(tokenizer, measured + warmups, length)
             directory = root / "prepared" / f"input_{length}"
             directory.mkdir(parents=True)

@@ -17,6 +17,7 @@ from llm_engine_benchmark.context_scaling import (
     accept_result,
     assert_idle,
     build_context_plan,
+    build_context_records,
     cell_config,
     load_sources,
     observed_concurrency,
@@ -24,6 +25,7 @@ from llm_engine_benchmark.context_scaling import (
     validate_prompt_set,
     write_context_report,
 )
+from llm_engine_benchmark.normalize import _build_cold_records, instruction_suffix_with_budget
 from llm_engine_benchmark.util import BenchmarkError, load_json, read_jsonl, write_jsonl
 
 MODULE = "llm_engine_benchmark.context_scaling"
@@ -204,6 +206,67 @@ class ContextScalingTests(unittest.TestCase):
         records[1]["prompt"] = "b" * 39
         with self.assertRaisesRegex(BenchmarkError, "token count"):
             validate_prompt_set(tokenizer, records, 40)
+
+    def test_eight_common_tokens_are_rejected_even_with_distinct_32_token_heads(self):
+        records = [
+            {"sample_id": "a", "prompt": "header00" + "a" * 32, "prompt_tokens": 40},
+            {"sample_id": "b", "prompt": "header00" + "b" * 32, "prompt_tokens": 40},
+        ]
+        with self.assertRaisesRegex(BenchmarkError, "shared 8-token prefix"):
+            validate_prompt_set(CharTokenizer(), records, 40)
+
+    def test_early_prefix_removes_common_header_without_changing_legacy_builder(self):
+        tokenizer = CharTokenizer()
+        config = cell_config(self.config, 2048)
+        sources = [
+            {
+                "sample_id": key,
+                "source": "synthetic",
+                "task": "qa",
+                "context": "Document.",
+                "instruction": "Preserve this task instruction.",
+            }
+            for key in ("w0-0", "w0-1", "w1-0", "measured-1")
+        ]
+        original_sources = copy.deepcopy(sources)
+        legacy = _build_cold_records(config, tokenizer, sources)
+        with self.assertRaisesRegex(BenchmarkError, "shared 8-token prefix"):
+            validate_prompt_set(tokenizer, legacy, 2048)
+        current = build_context_records(config, tokenizer, sources)
+        self.assertEqual(current, build_context_records(config, tokenizer, sources))
+        self.assertEqual(
+            validate_prompt_set(tokenizer, current, 2048)["unique_prefix_check_tokens"], 8
+        )
+        self.assertEqual(sources, original_sources)
+        self.assertEqual(legacy, _build_cold_records(config, tokenizer, sources))
+        for record, source in zip(current, sources, strict=True):
+            suffix, _ = instruction_suffix_with_budget(config, tokenizer, source)
+            self.assertTrue(record["prompt"].endswith(suffix))
+            self.assertEqual(record["metadata"]["context_prompt_format_version"], 2)
+
+    def test_block_cache_model_observes_no_reuse_across_warmups_and_measurement(self):
+        prefixes_by_run = {}
+
+        def cache_client(**kwargs):
+            result = fake_client(**kwargs)
+            directory = Path(kwargs["run_dir"])
+            run = next(p for p in (directory, *directory.parents) if p.name == "run_01")
+            seen = prefixes_by_run.setdefault(run, set())
+            records = list(read_jsonl(kwargs["records_path"]))
+            if kwargs.get("sample_ids") is not None:
+                by_id = {r["sample_id"]: r for r in records}
+                records = [by_id[key] for key in kwargs["sample_ids"]]
+            cached = 0
+            for record in records:
+                head = tuple(CharTokenizer().encode(record["prompt"])[:8])
+                cached += 8 if head in seen else 0
+                seen.add(head)
+            result["server_reported_cached_prompt_tokens_total"] = cached
+            return result
+
+        with tempfile.TemporaryDirectory() as temp:
+            _, result, _ = self.mocked_run(temp, client=cache_client)
+            self.assertEqual(result["accepted_runs"], 2)
 
     def test_invalid_missing_usage_and_cache_hits_rejected(self):
         valid = {

@@ -36,8 +36,12 @@ filter the timeline before attributing activity to the measurement interval.
   or extended through the existing normalizer, retaining the instruction suffix.
   Truncation may remove answer evidence. This measures serving cost, not quality.
 - Derived prompts live under the new results directory, never `data/prepared`.
-- Input text is re-tokenized and hashed. Duplicate IDs and shared 32-token prefixes
-  across measured/warm-up requests are rejected. Shorter common prefixes may exist.
+- Phase 1 prompt format v2 puts a deterministic per-sample hash before any common
+  text. The variable body is refitted to preserve the exact token count and task
+  instruction suffix. The legacy benchmark prompt builder remains unchanged.
+- Input text is re-tokenized and hashed. Duplicate IDs and shared eight-token
+  prefixes across measured/warm-up requests are rejected. Shorter common prefixes
+  may exist; the runtime zero-cache check remains mandatory for reported usage.
 - Any reported cached input tokens reject the run. Missing cache usage is labeled
   protocol-only evidence, not a measured zero cache-hit rate.
 - Active benchmark containers, active GPU compute processes, or a busy server port
@@ -135,3 +139,13 @@ delete or overwrite the interrupted evidence directory.
 
 The next phase adds workload mixtures, arrival-rate sweeps, cache-locality scenarios
 and per-class SLOs using the capacity harness. It is intentionally outside this runner.
+
+## Initial smoke-test correction
+
+The initial 8K C4 warm-up reported cached tokens of 0, 8, 8, and 8. The former
+32-token uniqueness check allowed a common leading header to survive. Format v2
+moves uniqueness to the beginning and tightens validation to eight tokens. This
+does not relax the zero-cache acceptance criterion or disable engine prefix caching.
+Retain the rejected `smoke-8k-01` evidence and rerun in `smoke-8k-02`. GPU validation
+of the corrected format is required before launching the full matrix. Do not pool
+results from different context prompt formats.
