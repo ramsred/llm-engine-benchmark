@@ -225,7 +225,7 @@ def _mean(rows: Sequence[CapacityEvidence], field: str) -> float:
 def _write_csv(path: Path, rows: Sequence[CapacityEvidence]) -> None:
     fields = list(asdict(rows[0]))
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for row in sorted(rows, key=lambda item: (item.offered_rps, item.repetition)):
             writer.writerow(asdict(row))

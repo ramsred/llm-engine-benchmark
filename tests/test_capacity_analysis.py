@@ -96,6 +96,7 @@ class CapacityAnalysisTests(unittest.TestCase):
             self.assertTrue(outputs["summary"].exists())
             self.assertTrue(outputs["report"].exists())
             self.assertTrue(outputs["provenance"].exists())
+            self.assertNotIn(b"\r\n", outputs["summary"].read_bytes())
             report = outputs["report"].read_text()
             self.assertIn("validated passing load", report)
             self.assertIn("0.010000", report)
