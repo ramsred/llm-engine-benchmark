@@ -134,7 +134,7 @@ class _AdmissionGate:
         assert waiter is not None
         try:
             await asyncio.wait_for(asyncio.shield(waiter), timeout=timeout_seconds)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             async with self._lock:
                 try:
                     self._waiters.remove(waiter)
