@@ -14,6 +14,7 @@ A reproducible, neutral benchmark for choosing a long-context serving stack on N
 - Cold unique-prefix versus warm shared-prefix cache experiments.
 - TTFT, TPOT, ITL, E2E latency, request/output throughput, cache evidence, and host telemetry.
 - Sequential Docker orchestration with pinned model, tokenizer, dataset, and image evidence.
+- Open-loop offered-load testing with bounded admission and explicit SLA pass/fail decisions.
 - Decision-oriented reporting that separates observations from hypotheses and profiler-backed conclusions.
 
 ## Preliminary headline findings
@@ -71,6 +72,19 @@ Capture an Nsight Systems trace for the TensorRT-LLM cold-C4 investigation:
 See the [profiling runbook](docs/profiling.md) for the baseline-first workflow, generated
 artifacts, and the questions the trace must answer.
 
+Run the initial production-capacity discovery sweep:
+
+```bash
+./bench capacity --config config/tensorrt-llm-capacity-120k.yaml \
+  --rates 0.008,0.012,0.016,0.020,0.024 --requests 20 \
+  --results-dir results/capacity/tensorrt-llm-120k-discovery \
+  --skip-image-pull
+```
+
+This starts a fresh server for every cold load point, generates arrivals independently of request
+completion, applies bounded admission, and reports the highest rate satisfying every SLA. See the
+[capacity runbook](docs/capacity.md).
+
 The smoke and full commands perform real inference and require Docker, NVIDIA Container Toolkit, model/data access, and sufficient disk. Ordinary CI runs tests, dry-run orchestration, package checks, and manifest verification only; it does not run GPU inference.
 
 ## Reports, charts, and provenance
@@ -101,6 +115,7 @@ accepted run JSON + request timings
 - [Results and analysis](docs/results.md)
 - [Profiling plan](docs/profiling.md)
 - [Prefill-budget case study](docs/prefill-budget-case-study.md)
+- [SLA-constrained capacity runbook](docs/capacity.md)
 - [Fairness and limitations](docs/fairness-and-limitations.md)
 - [Production recommendations](docs/production-recommendations.md)
 - [Reproducibility and implementation details](docs/reproducibility.md)
@@ -128,7 +143,7 @@ The repository excludes model weights, Hugging Face caches, TensorRT engines, se
 - [x] Profiler-backed root cause for the TensorRT-LLM cold-C4 ITL anomaly
 - [ ] TensorRT-LLM through Triton
 - [ ] Context scaling: 8K, 32K, 64K, 120K
-- [ ] SLA-constrained throughput
+- [ ] SLA-constrained throughput (workflow implemented; production runs pending)
 
 ## Authorship and citation
 

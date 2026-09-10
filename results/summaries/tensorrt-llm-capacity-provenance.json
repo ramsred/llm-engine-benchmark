@@ -1,0 +1,93 @@
+{
+  "benchmark_commit": "c065dd3968873830209e0fb6eed09ada699549ae",
+  "compatibility": {
+    "cache_mode": "cold",
+    "engine": "tensorrt_llm",
+    "image_digest": "[\"nvcr.io/nvidia/tensorrt-llm/release@sha256:13fec2fefd5e10cad82ecdc0fe6fa142080941e4b89ac6b5f3e74895d8db1342\"]|sha256:1b647f34a48964c9db8df5de02bb2409856c5c987b218209678b533f935f9060",
+    "model_commit_sha": "6cee5e81ee83917806bbde320786a8fb61efebee",
+    "model_repo_id": "openai/gpt-oss-20b",
+    "runtime_state": "steady",
+    "sample_count": 100,
+    "sla_targets": {
+      "e2e_p95_seconds": 250.0,
+      "itl_p95_seconds": 1.5,
+      "max_rejection_fraction": 0.01,
+      "min_success_fraction": 0.99,
+      "queue_p95_seconds": 10.0,
+      "ttft_p95_seconds": 70.0
+    }
+  },
+  "decision": {
+    "decision_status": "validated_transition_interval",
+    "highest_validated_passing_rps": 0.016,
+    "incomplete_rates": [],
+    "lowest_validated_failing_rps": 0.02,
+    "non_monotonic": false,
+    "rate_statuses": {
+      "0.014": {
+        "failing_runs": 0,
+        "observed_runs": 3,
+        "passing_runs": 3,
+        "status": "PASS",
+        "valid_runs": 3
+      },
+      "0.016": {
+        "failing_runs": 0,
+        "observed_runs": 3,
+        "passing_runs": 3,
+        "status": "PASS",
+        "valid_runs": 3
+      },
+      "0.018": {
+        "failing_runs": 2,
+        "observed_runs": 3,
+        "passing_runs": 1,
+        "status": "UNSTABLE",
+        "valid_runs": 3
+      },
+      "0.02": {
+        "failing_runs": 3,
+        "observed_runs": 3,
+        "passing_runs": 0,
+        "status": "FAIL",
+        "valid_runs": 3
+      }
+    },
+    "recommended_operating_rps": 0.014,
+    "unstable_rates": [
+      0.018
+    ]
+  },
+  "generated_at": "2026-09-10T18:12:16.857023+00:00",
+  "generated_by": "llm_engine_benchmark.capacity_analysis",
+  "source_roots": [
+    "results/capacity/tensorrt-llm-120k-validation",
+    "results/capacity/tensorrt-llm-120k-rps-020-validation"
+  ],
+  "source_sha256": {
+    "results/capacity/tensorrt-llm-120k-rps-020-validation/tensorrt_llm/cold/rps_0p020000/run_01/capacity_metadata.json": "2ef6ae20d4b899b6bce3aa59b4754cdd978293a06bd4b76be725d25a67af2b14",
+    "results/capacity/tensorrt-llm-120k-rps-020-validation/tensorrt_llm/cold/rps_0p020000/run_01/capacity_results.json": "c1cdfe67a77895441657b36491687e7627f54913e147be3a6599b5cab63fb9ea",
+    "results/capacity/tensorrt-llm-120k-rps-020-validation/tensorrt_llm/cold/rps_0p020000/run_02/capacity_metadata.json": "6f49c7b481d9619ca338c3744dd8017ebc43e2cd288a409209896eeba3ed009e",
+    "results/capacity/tensorrt-llm-120k-rps-020-validation/tensorrt_llm/cold/rps_0p020000/run_02/capacity_results.json": "ed483edf44a412762506249db40eca4c448bd385debf7412ee56256d7796bdb2",
+    "results/capacity/tensorrt-llm-120k-rps-020-validation/tensorrt_llm/cold/rps_0p020000/run_03/capacity_metadata.json": "0fee5f24112798d534f9e0f0ed23d6f27811e95013eb52623219a938507be3a3",
+    "results/capacity/tensorrt-llm-120k-rps-020-validation/tensorrt_llm/cold/rps_0p020000/run_03/capacity_results.json": "7c2e29a699a6df787672770b5c65d78d3d1d1ee5475c2bff8d6e4a63c507de43",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p014000/run_01/capacity_metadata.json": "247f34ee07222cb95c9feb83a8a7b84fd0f8998b9e909cdd64843c289ccb4451",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p014000/run_01/capacity_results.json": "ed364d359cb9b625246ae3cd54fe8aa65b67d278128dcaed614c7db51a52e4e1",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p014000/run_02/capacity_metadata.json": "6fa6bfd9afbdef6106dd056cf448c1770c8ee20140161fc05d63a5f04a7f1133",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p014000/run_02/capacity_results.json": "0b380b55242ecf6b84537d0cf4aa18d3bfc38e437c4cb1f49a9390ce4a7f0346",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p014000/run_03/capacity_metadata.json": "cf57537f7837c51a8d58e8876d6b4c7aa35349bb9ef30e8b078d6c839aab7583",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p014000/run_03/capacity_results.json": "fa4cf8ecdd0e2c45f876fc5711a252bc98cca1ed2a3029c3c2de94d1c5b508ce",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p016000/run_01/capacity_metadata.json": "20c0ca0cf504a505056448b496fdbd2065e16d594e178812316cf347828326d4",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p016000/run_01/capacity_results.json": "90f93110e679839fb184a06dc00e3a5e10e4f0e9ace04a603bab1ab399d487fa",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p016000/run_02/capacity_metadata.json": "46176ea1d89b7a820c4826052097358f34eb447f0fa0910f016290d5aad23520",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p016000/run_02/capacity_results.json": "4db30a864f8cc1e42e3718d9ba7fe55a8a6ed3e15d3c43f9a096ae2c805da01e",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p016000/run_03/capacity_metadata.json": "45cb770d4e6e78dd0a68aec6211b883087f0c99a7ec3d64f6cd642fa51673863",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p016000/run_03/capacity_results.json": "81f6d1c9383d7fe6d2a9c70377246c61e5f28fa143b68c480f95734b941a57c2",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p018000/run_01/capacity_metadata.json": "2c72386af4dae053fd77f2b1c4d3c7e0564b8d7495ba8e084ca59a2827b1481e",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p018000/run_01/capacity_results.json": "966a5b871b7e9b27fe6516a6d48472fe57f7daf39658fe086dd89d13bc079d41",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p018000/run_02/capacity_metadata.json": "e89c98c9137ee1acc68bef00c43a6a483bba50233e022a39e04e98df0248c0b3",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p018000/run_02/capacity_results.json": "88cb4d9e6e650491453b744c2a3a56791d9b5a3f169b952cff06615be2bb4ca5",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p018000/run_03/capacity_metadata.json": "8c46ca733bb2a83a4319e87477a243e0b7f980809a8850422a374bba602e42aa",
+    "results/capacity/tensorrt-llm-120k-validation/tensorrt_llm/cold/rps_0p018000/run_03/capacity_results.json": "5b655e3270b98f9f67ca53d023b4e926e27aa05e40e1dfebac5e2955e43d4d8b"
+  }
+}
