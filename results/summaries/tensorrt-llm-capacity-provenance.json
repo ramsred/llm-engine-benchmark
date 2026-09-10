@@ -1,5 +1,5 @@
 {
-  "benchmark_commit": "db27e84f59b98ade665610101f4aa2815d24ef02",
+  "benchmark_commit": "c065dd3968873830209e0fb6eed09ada699549ae",
   "compatibility": {
     "cache_mode": "cold",
     "engine": "tensorrt_llm",
@@ -58,7 +58,7 @@
       0.018
     ]
   },
-  "generated_at": "2026-09-10T18:06:41.281283+00:00",
+  "generated_at": "2026-09-10T18:12:16.857023+00:00",
   "generated_by": "llm_engine_benchmark.capacity_analysis",
   "source_roots": [
     "results/capacity/tensorrt-llm-120k-validation",
