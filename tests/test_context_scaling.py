@@ -15,6 +15,7 @@ from llm_engine_benchmark.context_scaling import (
     ContextCell,
     ContextOptions,
     accept_result,
+    allocate_context_prefixes,
     assert_idle,
     build_context_plan,
     build_context_records,
@@ -212,7 +213,7 @@ class ContextScalingTests(unittest.TestCase):
             {"sample_id": "a", "prompt": "header00" + "a" * 32, "prompt_tokens": 40},
             {"sample_id": "b", "prompt": "header00" + "b" * 32, "prompt_tokens": 40},
         ]
-        with self.assertRaisesRegex(BenchmarkError, "shared 8-token prefix"):
+        with self.assertRaisesRegex(BenchmarkError, "shared first-token prefix"):
             validate_prompt_set(CharTokenizer(), records, 40)
 
     def test_early_prefix_removes_common_header_without_changing_legacy_builder(self):
@@ -230,19 +231,19 @@ class ContextScalingTests(unittest.TestCase):
         ]
         original_sources = copy.deepcopy(sources)
         legacy = _build_cold_records(config, tokenizer, sources)
-        with self.assertRaisesRegex(BenchmarkError, "shared 8-token prefix"):
+        with self.assertRaisesRegex(BenchmarkError, "shared first-token prefix"):
             validate_prompt_set(tokenizer, legacy, 2048)
         current = build_context_records(config, tokenizer, sources)
         self.assertEqual(current, build_context_records(config, tokenizer, sources))
         self.assertEqual(
-            validate_prompt_set(tokenizer, current, 2048)["unique_prefix_check_tokens"], 8
+            validate_prompt_set(tokenizer, current, 2048)["unique_prefix_check_tokens"], 1
         )
         self.assertEqual(sources, original_sources)
         self.assertEqual(legacy, _build_cold_records(config, tokenizer, sources))
         for record, source in zip(current, sources, strict=True):
             suffix, _ = instruction_suffix_with_budget(config, tokenizer, source)
             self.assertTrue(record["prompt"].endswith(suffix))
-            self.assertEqual(record["metadata"]["context_prompt_format_version"], 2)
+            self.assertEqual(record["metadata"]["context_prompt_format_version"], 3)
 
     def test_block_cache_model_observes_no_reuse_across_warmups_and_measurement(self):
         prefixes_by_run = {}
@@ -258,8 +259,8 @@ class ContextScalingTests(unittest.TestCase):
                 records = [by_id[key] for key in kwargs["sample_ids"]]
             cached = 0
             for record in records:
-                head = tuple(CharTokenizer().encode(record["prompt"])[:8])
-                cached += 8 if head in seen else 0
+                head = tuple(CharTokenizer().encode(record["prompt"])[:1])
+                cached += 1 if head in seen else 0
                 seen.add(head)
             result["server_reported_cached_prompt_tokens_total"] = cached
             return result
@@ -267,6 +268,41 @@ class ContextScalingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             _, result, _ = self.mocked_run(temp, client=cache_client)
             self.assertEqual(result["accepted_runs"], 2)
+
+    def test_one_common_token_is_rejected_even_if_remaining_tokens_differ(self):
+        records = [
+            {"sample_id": "w0-0", "prompt": "f" + "6" * 39, "prompt_tokens": 40},
+            {"sample_id": "w0-2", "prompt": "f" + "9" * 39, "prompt_tokens": 40},
+        ]
+        with self.assertRaisesRegex(BenchmarkError, "shared first-token"):
+            validate_prompt_set(CharTokenizer(), records, 40)
+
+    def test_first_token_allocator_handles_full_100_samples_plus_8_warmups(self):
+        class NumericTokenizer:
+            def encode(self, text, add_special_tokens=False):
+                # Simulates the numeric marker segmentation, not the whole model tokenizer.
+                return [int(text[:3]) + 1000, 10]
+
+        sources = [{"sample_id": f"sample-{i}"} for i in range(100)]
+        sources += [{"sample_id": f"w{wave}-{i}"} for wave in range(2) for i in range(4)]
+        tokenizer = NumericTokenizer()
+        prefixes = allocate_context_prefixes(tokenizer, sources, 1)
+        self.assertEqual(len({tokenizer.encode(p)[0] for p in prefixes.values()}), 108)
+        self.assertEqual(prefixes, allocate_context_prefixes(tokenizer, list(reversed(sources)), 1))
+
+    def test_first_token_allocator_fails_closed_on_invariant_first_token(self):
+        class FixedFirstTokenizer:
+            def encode(self, text, add_special_tokens=False):
+                return [99, len(text)]
+
+        with self.assertRaisesRegex(BenchmarkError, "enough distinct"):
+            allocate_context_prefixes(
+                FixedFirstTokenizer(), [{"sample_id": "a"}, {"sample_id": "b"}], 1
+            )
+
+    def test_first_token_allocator_rejects_duplicate_ids(self):
+        with self.assertRaisesRegex(BenchmarkError, "Duplicate"):
+            allocate_context_prefixes(CharTokenizer(), [{"sample_id": "a"}, {"sample_id": "a"}], 1)
 
     def test_invalid_missing_usage_and_cache_hits_rejected(self):
         valid = {

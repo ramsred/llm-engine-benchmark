@@ -13,6 +13,7 @@ import json
 import math
 import random
 import socket
+import string
 import subprocess
 import time
 import uuid
@@ -109,34 +110,64 @@ def build_context_plan(config: dict, options: ContextOptions) -> list[ContextCel
     ]
 
 
+def allocate_context_prefixes(tokenizer, sources: list[dict], seed: int) -> dict[str, str]:
+    """Allocate prefixes by actual first token, jointly for an entire experiment set.
+
+    Fixed-width decimal markers normally supply many distinct starting tokens.
+    Letter fallbacks support tokenizers with different number segmentation. This
+    deliberately checks the tokenizer rather than assuming either segmentation.
+    Exhaustion fails closed instead of accepting a collision or changing cache policy.
+    """
+    sample_ids = sorted(str(source["sample_id"]) for source in sources)
+    if len(set(sample_ids)) != len(sample_ids):
+        raise BenchmarkError("Duplicate sample ID in context prefix allocation")
+    markers = iter([*(f"{i:03d}" for i in range(1000)), *string.ascii_letters])
+    used: set[int] = set()
+    prefixes = {}
+    for sample_id in sample_ids:
+        nonce = sha256_text(
+            json.dumps(
+                {
+                    "format": "context-prefix-v3",
+                    "seed": seed,
+                    "sample_id": sample_id,
+                },
+                sort_keys=True,
+            )
+        )
+        for marker in markers:
+            prefix = marker + "\n" + nonce + "\n"
+            tokens = encode(tokenizer, prefix)
+            if tokens and tokens[0] not in used:
+                used.add(tokens[0])
+                prefixes[sample_id] = prefix
+                break
+        else:
+            raise BenchmarkError("Tokenizer cannot supply enough distinct first-token prefixes")
+    return prefixes
+
+
 def build_context_records(config: dict, tokenizer, sources: list[dict]) -> list[dict]:
     """Add an early unique prefix without changing the legacy cold-prompt builder.
 
     The canonical builder starts every prompt with the same descriptive header.
     A unique sample ID later in that header does not prevent reuse of its first
-    eight tokens. Put deterministic per-sample entropy before any common text,
-    then refit only the variable body to retain the exact length and task suffix.
+    eight tokens. Even unrelated hashes may share their first token. Allocate
+    distinct first tokens before fitting; the caller must include measured and
+    warm-up sources together. Refit only the variable body to retain the exact
+    length and task suffix, then verify the fitted prompts together.
     """
     records = _build_cold_records(config, tokenizer, sources)
     target = int(config["project"]["input_tokens"])
+    prefixes = allocate_context_prefixes(tokenizer, sources, int(config["project"]["seed"]))
     for record, source in zip(records, sources, strict=True):
         suffix, _ = instruction_suffix_with_budget(config, tokenizer, source)
         old_prompt = record["prompt"]
         if not old_prompt.endswith(suffix):
             raise BenchmarkError("Cannot preserve instruction suffix during context prefix refit")
-        nonce = sha256_text(
-            json.dumps(
-                {
-                    "format": "context-prefix-v2",
-                    "seed": int(config["project"]["seed"]),
-                    "sample_id": record["sample_id"],
-                },
-                sort_keys=True,
-            )
-        )
         prompt, tokens, fit = fit_variable_segment(
             tokenizer,
-            prefix=nonce + "\n",
+            prefix=prefixes[str(record["sample_id"])],
             segment_source=old_prompt[: -len(suffix)],
             suffix=suffix,
             target_tokens=target,
@@ -146,17 +177,19 @@ def build_context_records(config: dict, tokenizer, sources: list[dict]) -> list[
         record["prompt_tokens"] = len(tokens)
         record["metadata"].update(
             {
-                "context_prompt_format_version": 2,
+                "context_prompt_format_version": 3,
+                "first_token_id": tokens[0],
                 "context_prefix_refit": fit,
                 "prompt_sha256": sha256_text(prompt),
                 "first_256_token_sha256": sha256_token_ids(tokens[:256]),
             }
         )
+    validate_prompt_set(tokenizer, records, target)
     return records
 
 
 def validate_prompt_set(tokenizer, records: list[dict], target: int) -> dict:
-    """Check exact retokenization and reject shared eight-token prefixes.
+    """Check exact retokenization and reject any shared first token.
 
     This is protocol evidence, not proof of engine cache hits/misses. Actual
     cached-token usage, when available, is checked separately after execution.
@@ -168,13 +201,13 @@ def validate_prompt_set(tokenizer, records: list[dict], target: int) -> dict:
         tokens = encode(tokenizer, record["prompt"])
         if len(tokens) != target or record["prompt_tokens"] != target:
             raise BenchmarkError(f"Incorrect token count: {record['sample_id']}")
-        head = tuple(tokens[:8])
+        head = tuple(tokens[:1])
         if head in heads or record["sample_id"] in ids:
-            raise BenchmarkError("Duplicate sample ID or shared 8-token prefix")
+            raise BenchmarkError("Duplicate sample ID or shared first-token prefix")
         heads.add(head)
         ids.add(record["sample_id"])
         hashes[record["sample_id"]] = sha256_text(record["prompt"])
-    return {"input_tokens": target, "unique_prefix_check_tokens": 8, "prompt_sha256": hashes}
+    return {"input_tokens": target, "unique_prefix_check_tokens": 1, "prompt_sha256": hashes}
 
 
 def load_sources(config: dict) -> tuple[dict, list[dict], dict]:
@@ -265,7 +298,7 @@ def execute_cell(config, lock, tokenizer, cell, options, prepared, digest, root)
         "started_at": utc_now(),
         "status": "starting",
         "profile_nsys": options.profile_nsys,
-        "context_prompt_format_version": 2,
+        "context_prompt_format_version": 3,
         "image_digest": digest,
         "warmup_excluded_from_measurement": True,
         "warmup_waves": options.warmup_waves,
@@ -472,7 +505,7 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
         "runs": [asdict(cell) for cell in plan],
         "options": {**asdict(options), "output_dir": str(root)},
         "scope": "context_characterization_no_quality_or_production_capacity_claim",
-        "context_prompt_format_version": 2,
+        "context_prompt_format_version": 3,
     }
     try:
         payload["git_commit"] = subprocess.check_output(
@@ -507,8 +540,11 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
         ]
         for length in options.lengths:
             derived = cell_config(config, length)
-            measured = build_context_records(derived, tokenizer, selected)
-            warmups = build_context_records(derived, tokenizer, warm_sources)
+            # One allocation covers ALL prompts sharing a server, including all
+            # warm-up waves. Independent allocations could reuse starting tokens.
+            combined = build_context_records(derived, tokenizer, selected + warm_sources)
+            measured = combined[: len(selected)]
+            warmups = combined[len(selected) :]
             checks = validate_prompt_set(tokenizer, measured + warmups, length)
             directory = root / "prepared" / f"input_{length}"
             directory.mkdir(parents=True)

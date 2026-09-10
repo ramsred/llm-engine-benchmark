@@ -36,12 +36,15 @@ filter the timeline before attributing activity to the measurement interval.
   or extended through the existing normalizer, retaining the instruction suffix.
   Truncation may remove answer evidence. This measures serving cost, not quality.
 - Derived prompts live under the new results directory, never `data/prepared`.
-- Phase 1 prompt format v2 puts a deterministic per-sample hash before any common
-  text. The variable body is refitted to preserve the exact token count and task
+- Phase 1 prompt format v3 allocates deterministic markers using the pinned
+  tokenizer so every prompt starts with a different token. Allocation covers the
+  entire measured set and every warm-up wave together. Markers are selected from
+  decimal and letter candidates; insufficient distinct tokens fail preparation.
+  The variable body is refitted to preserve the exact token count and task
   instruction suffix. The legacy benchmark prompt builder remains unchanged.
-- Input text is re-tokenized and hashed. Duplicate IDs and shared eight-token
-  prefixes across measured/warm-up requests are rejected. Shorter common prefixes
-  may exist; the runtime zero-cache check remains mandatory for reported usage.
+- Saved prompt text is re-tokenized and hashed. Duplicate IDs or even a single
+  shared first token across measured/warm-up requests are rejected. Actual server
+  usage is still checked; no cached-token tolerance is introduced.
 - Any reported cached input tokens reject the run. Missing cache usage is labeled
   protocol-only evidence, not a measured zero cache-hit rate.
 - Active benchmark containers, active GPU compute processes, or a busy server port
@@ -144,8 +147,15 @@ and per-class SLOs using the capacity harness. It is intentionally outside this 
 
 The initial 8K C4 warm-up reported cached tokens of 0, 8, 8, and 8. The former
 32-token uniqueness check allowed a common leading header to survive. Format v2
-moves uniqueness to the beginning and tightens validation to eight tokens. This
-does not relax the zero-cache acceptance criterion or disable engine prefix caching.
-Retain the rejected `smoke-8k-01` evidence and rerun in `smoke-8k-02`. GPU validation
-of the corrected format is required before launching the full matrix. Do not pool
-results from different context prompt formats.
+moved hashes to the beginning but still allowed first-token collisions: w0-0 and
+w0-2 both began with token 69, and one reported one cached token. Format v3 assigns
+distinct first tokens using the actual tokenizer, then validates the fitted text.
+This does not relax zero-cache acceptance or disable engine prefix caching.
+Retain `smoke-8k-01` and `smoke-8k-02`; rerun in `smoke-8k-03`. GPU validation is
+required before launching the full matrix. Do not pool different prompt formats.
+
+Offline validation used the tokenizer JSON pinned at
+`6cee5e81ee83917806bbde320786a8fb61efebee`: allocation produced 108 distinct
+starting tokens, and 12 synthetic prompts at each of 8,000 and 120,000 tokens
+passed exact-length and first-token checks. These checks do not substitute for
+the next GPU smoke test or establish engine-reported zero cache usage.
