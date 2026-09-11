@@ -1,0 +1,245 @@
+{
+  "benchmark_commit": "eacf23f5c5639ccb7584e8079b2e58930648a2a0",
+  "compatibility": {
+    "config": {
+      "engines": {
+        "sglang": {
+          "chunked_prefill_size": 8192,
+          "container_name": "llmbench-sglang",
+          "container_port": 30000,
+          "dtype": "bfloat16",
+          "extra_args": [
+            "--enable-metrics",
+            "--enable-cache-report",
+            "--sampling-defaults",
+            "openai"
+          ],
+          "host_port": 30000,
+          "image": "lmsysorg/sglang@sha256:00c53fe4c31bf22d7b37537f28bbdfd924c02de13cdfb4bff7378c9c34d75ab2",
+          "kv_cache_dtype": "fp8_e4m3",
+          "mem_fraction_static": 0.8,
+          "quantization": "mxfp4",
+          "request_extra": {
+            "add_special_tokens": false,
+            "ignore_eos": true,
+            "skip_special_tokens": false,
+            "stream_options": {
+              "include_usage": true
+            }
+          }
+        },
+        "tensorrt_llm": {
+          "backend": "pytorch",
+          "container_name": "llmbench-tensorrt-llm",
+          "container_port": 8000,
+          "dtype": "bfloat16",
+          "extra_args": [],
+          "host_port": 8001,
+          "image": "nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc21",
+          "kv_cache_dtype": "fp8",
+          "kv_cache_free_gpu_memory_fraction": 0.8,
+          "max_batch_size": 4,
+          "max_num_tokens": 2048,
+          "quantization": "mxfp4",
+          "request_extra": {
+            "add_special_tokens": false,
+            "ignore_eos": true,
+            "skip_special_tokens": false,
+            "stream_options": {
+              "include_usage": true
+            }
+          }
+        },
+        "vllm": {
+          "container_name": "llmbench-vllm",
+          "container_port": 8000,
+          "dtype": "bfloat16",
+          "extra_args": [],
+          "generation_config": "vllm",
+          "gpu_memory_utilization": 0.8,
+          "host_port": 8000,
+          "image": "nvcr.io/nvidia/vllm:26.06-py3",
+          "kv_cache_dtype": "fp8_e4m3",
+          "kv_cache_dtype_skip_layers": "sliding_window",
+          "max_num_batched_tokens": 8192,
+          "quantization": "mxfp4",
+          "request_extra": {
+            "add_special_tokens": false,
+            "ignore_eos": true,
+            "skip_special_tokens": false,
+            "stream_options": {
+              "include_usage": true
+            }
+          }
+        }
+      },
+      "normalization": {
+        "controlled_distractor_min_chars": 640000,
+        "extra_source_tokens": 4096,
+        "instruction_reserve_tokens": 1024,
+        "max_source_context_chars": 4000000,
+        "prefix_boundary_candidates": [
+          "\u001e",
+          "\n\u001e\n",
+          "\n\n<<<UNIQUE_SUFFIX>>>\n",
+          "\n--- UNIQUE SUFFIX ---\n",
+          " \u00a7 "
+        ],
+        "validation_first_tokens": 256
+      },
+      "paths": {
+        "data_dir": "/home/ramsred/projects/llm-engine-benchmark/data",
+        "hf_cache_dir": "/home/ramsred/.cache/huggingface",
+        "lock_file": "/home/ramsred/projects/llm-engine-benchmark/experiment.lock.json",
+        "results_dir": "/home/ramsred/projects/llm-engine-benchmark/results",
+        "sglang_cache_dir": "/home/ramsred/.cache/sglang",
+        "triton_cache_dir": "/home/ramsred/.cache/triton",
+        "vllm_cache_dir": "/home/ramsred/.cache/vllm"
+      },
+      "project": {
+        "cache_modes": [
+          "cold"
+        ],
+        "concurrency": [
+          1,
+          2,
+          4
+        ],
+        "context_length": 131072,
+        "cooldown_seconds": 60,
+        "engines": [
+          "tensorrt_llm"
+        ],
+        "gpus": "all",
+        "input_tokens": 120000,
+        "model": "openai/gpt-oss-20b",
+        "model_revision": null,
+        "output_tokens": 512,
+        "readiness_timeout_seconds": 3600,
+        "repetitions": 3,
+        "request_timeout_seconds": 3600,
+        "require_server_token_usage": true,
+        "run_order": "alternate",
+        "samples": 100,
+        "save_outputs": true,
+        "seed": 20250308,
+        "shared_prefix_tokens": 100000,
+        "tokenizer_revision": null,
+        "trust_remote_code": false,
+        "warm_groups": 10
+      },
+      "sources": {
+        "infinitebench": {
+          "repo_id": "xinrongzhang2022/InfiniteBench",
+          "revision": "main"
+        },
+        "longbench_v2": {
+          "repo_id": "THUDM/LongBench-v2",
+          "revision": "main"
+        },
+        "ruler": {
+          "fetch_upstream_source": true,
+          "repo_url": "https://github.com/NVIDIA/RULER.git",
+          "revision": "main"
+        }
+      },
+      "telemetry": {
+        "enabled": true,
+        "interval_seconds": 1.0,
+        "nvidia_dmon": true,
+        "pidstat": true,
+        "psutil": true
+      }
+    },
+    "context_measurement_protocol_version": 1,
+    "context_prompt_format_version": 3,
+    "lock": {
+      "created_at": "2026-07-18T01:48:57+00:00",
+      "datasets": {
+        "infinitebench": {
+          "commit_sha": "90f0394333616266d9fe85824ceaf505093cbaa5",
+          "repo_id_requested": "xinrongzhang2022/InfiniteBench",
+          "repo_id_resolved": "xinrongzhang2022/InfiniteBench",
+          "revision_requested": "main"
+        },
+        "longbench_v2": {
+          "commit_sha": "2b48e494f2c7a2f0af81aae178e05c7e1dde0fe9",
+          "repo_id_requested": "THUDM/LongBench-v2",
+          "repo_id_resolved": "zai-org/LongBench-v2",
+          "revision_requested": "main"
+        }
+      },
+      "format_version": 1,
+      "model": {
+        "commit_sha": "6cee5e81ee83917806bbde320786a8fb61efebee",
+        "repo_id": "openai/gpt-oss-20b",
+        "revision_requested": "main",
+        "tokenizer_commit_sha": "6cee5e81ee83917806bbde320786a8fb61efebee",
+        "tokenizer_revision_requested": "main"
+      },
+      "sources": {
+        "ruler": {
+          "commit_sha": "38da79d79519ef87aa46ae804f838e1eab7f86d7",
+          "generation_mode": "neutral_builtin_task_families",
+          "repo_url": "https://github.com/NVIDIA/RULER.git",
+          "revision_requested": "main"
+        }
+      }
+    },
+    "profile_nsys": false,
+    "samples": 20,
+    "scope": "context_characterization_no_quality_or_production_capacity_claim",
+    "source_sha256": {
+      "/home/ramsred/projects/llm-engine-benchmark/data/canonical/manifest.jsonl": "bb239d19d15dc07f39cf5892d273bf4656ef4f7bb6dfccd266d530c6d78d67c7",
+      "/home/ramsred/projects/llm-engine-benchmark/data/canonical/manifest_metadata.json": "53b8b388b4faa6a650e2d4e591bb5c465b2d46dacbacdd08fc2a0d92f66d9dd8",
+      "/home/ramsred/projects/llm-engine-benchmark/experiment.lock.json": "db0478cc4b9611d98116393752ecf0ee93d2d766aed28a4472ba766f46f2f3e3"
+    },
+    "warmup_waves": 2
+  },
+  "decision": {
+    "accepted_cells": 8,
+    "complete": true,
+    "expected_cells": 8,
+    "missing_cells": [],
+    "status": "complete_discovery"
+  },
+  "generated_at": "2026-09-11T14:45:30.697756+00:00",
+  "generated_by": "llm_engine_benchmark.context_analysis",
+  "source_roots": [
+    "results/context-scaling/discovery-01",
+    "results/context-scaling/discovery-01-recovery-120k-c1",
+    "results/context-scaling/discovery-01-recovery-32k-c4"
+  ],
+  "source_sha256": {
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-120k-c1/context_plan.json": "97a2cecac73a360d626af34b43681fd55dd25e6a275c24b1f5ffb42beebe08f3",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-120k-c1/image_identity.json": "a2a22e8cea99bbc7c81f887633d593e1d70affe067f6c2e1e7762ce77d39450f",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-120k-c1/input_120000/c1/run_01/client_results.json": "666c2755f3b8e24ce176a60c6d6050ddb7cce19e29f0ac58ebdf883070044ccf",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-120k-c1/input_120000/c1/run_01/context_metadata.json": "85d29c81ea8e84eb9537e8cd3903ddf83e8eb349d64302ad63f7ce187789d2e7",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-120k-c1/input_120000/c1/run_01/request_timings.jsonl": "388a7bab24b4923955a3c550fb3283526d5cb0194b686dede0d594b60885a776",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-32k-c4/context_plan.json": "a761cc25b612cfcde5efe4965ef3dd0947d9a3e2aba4bddfcac9f57215c68661",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-32k-c4/image_identity.json": "a2a22e8cea99bbc7c81f887633d593e1d70affe067f6c2e1e7762ce77d39450f",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-32k-c4/input_32000/c4/run_01/client_results.json": "bbe717211c841b62139f4b2c7881b54f8351fd57fb959fbfdaf9fa4009375f77",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-32k-c4/input_32000/c4/run_01/context_metadata.json": "6221c74a42ec4f3f22b3b9fb1c306958bd2c7936f940cc14f1800b5611d952c8",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01-recovery-32k-c4/input_32000/c4/run_01/request_timings.jsonl": "eb088bc22b4d79ba36a2514963a930e6fef41a5173a7fd89518ad245f90e24c0",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/context_plan.json": "0e3a16679248905cad8fc813b6c03a9b30575d0024436dc5d6c4fa41e1d2f8cc",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/image_identity.json": "a2a22e8cea99bbc7c81f887633d593e1d70affe067f6c2e1e7762ce77d39450f",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_120000/c4/run_01/client_results.json": "e96392f4b78dffc0604d67a043240b32580bbf0169a5cd48055846f6c9f2b1be",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_120000/c4/run_01/context_metadata.json": "5013d4417f6a7499105e046f0d6d45df200b47d3faf33a491f46d67d9cac4f71",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_120000/c4/run_01/request_timings.jsonl": "2f3881600f29f53b45fc9eb33e3ac783ee7f01449af5e9f3e621288fcd9dd3a6",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_32000/c1/run_01/client_results.json": "fefb52452d447cb56ab9a9e1d116a0a1ccf13808a2e19726f75832595086e256",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_32000/c1/run_01/context_metadata.json": "7e4949961a044fc12e048189fd9e0dd6366c74906c6b6b77f6791205b4b5fa62",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_32000/c1/run_01/request_timings.jsonl": "fd856b88c1afb864d954f7509dda4d241ff2c2f5a350ccdf79b95fee17d5b624",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_64000/c1/run_01/client_results.json": "e637f7000ee7b0d188bc4a0b9d0c486eb0f2cc3bf41964977eeb3028a079e6ab",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_64000/c1/run_01/context_metadata.json": "da2d4ac7bc8ffdc0eb02781abbfd8d067c0b7e32b8d0ed24a2003153a304863b",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_64000/c1/run_01/request_timings.jsonl": "b0587b0b577fefaec230577be9b86ca975279b47fb089c02a96ee2e0f65ac364",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_64000/c4/run_01/client_results.json": "3f85494270ca3ea1f585a4d550776df2428e9332637acb4cc24bec93e32356ff",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_64000/c4/run_01/context_metadata.json": "280992826f2e172c2392b048b16915f583de67e44f5bcb1df96791ae793fe47f",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_64000/c4/run_01/request_timings.jsonl": "52c587cc344d3f0780b838d37aad50d7528467df0f0ac18c7ca302a0e56ed91d",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_8000/c1/run_01/client_results.json": "ec0925b26cd03835e34504c2a4a59bcb71d44baf32fcaf79567a19b928b75850",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_8000/c1/run_01/context_metadata.json": "aba3b09ff315aebd2323a8db67fb207db5e89394551756cc0e9447b450cb97d2",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_8000/c1/run_01/request_timings.jsonl": "5bbbedf165bf3e6de3c11c90bd5c3cb800682b0f6904a303df54fbfecc681d1c",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_8000/c4/run_01/client_results.json": "2d9a47b1edeb8c3958797e91a874ab6defeddf2ae7a2b493109391e714ecb5b8",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_8000/c4/run_01/context_metadata.json": "727c753e26dda81d2e6fedd9245a5c7cb8e9d91682796bd773a6f2c219c9ffcb",
+    "/home/ramsred/projects/llm-engine-benchmark/results/context-scaling/discovery-01/input_8000/c4/run_01/request_timings.jsonl": "a9c187ae98215eefaf55536fc3a2f9a6989fb82e8c1d9b07b804eae61003a745"
+  }
+}
