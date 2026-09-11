@@ -389,6 +389,42 @@ class ContextScalingTests(unittest.TestCase):
         self.assertEqual(original, self.config)
         return root, result, mock_client
 
+    def mocked_resume(self, root, client=fake_client):
+        sources = [
+            {
+                "sample_id": f"sample-{i}",
+                "source": "ruler",
+                "task": "qa",
+                "context": "Document.",
+                "instruction": "Answer the question.",
+            }
+            for i in range(100)
+        ]
+        options = replace(
+            self.options,
+            output_dir=root,
+            lengths=(2048,),
+            concurrencies=(1, 4),
+            samples=4,
+            cooldown_seconds=0,
+            resume=True,
+        )
+        FakeServer.instances = []
+        with ExitStack() as stack:
+            stack.enter_context(patch(f"{MODULE}.load_sources", return_value=({}, sources, {})))
+            stack.enter_context(patch(f"{MODULE}.assert_idle"))
+            stack.enter_context(
+                patch(f"{MODULE}.load_pinned_tokenizer", return_value=CharTokenizer())
+            )
+            stack.enter_context(patch(f"{MODULE}.DockerEngineServer", FakeServer))
+            stack.enter_context(patch(f"{MODULE}.TelemetrySession"))
+            stack.enter_context(patch(f"{MODULE}.write_metrics_diff"))
+            mock_client = stack.enter_context(
+                patch(f"{MODULE}.run_benchmark_client", side_effect=client)
+            )
+            result = run_context_scaling(self.config, options)
+        return result, mock_client
+
     def test_end_to_end_excludes_warmup_and_preserves_existing_artifacts(self):
         with tempfile.TemporaryDirectory() as temp:
             sentinel = Path(temp) / "original-results.json"
@@ -414,6 +450,84 @@ class ContextScalingTests(unittest.TestCase):
             self.assertEqual(len(set(owned)), 2)
             self.assertTrue(all(name.startswith("llmbench-context-") for name in owned))
             self.assertTrue(all(not s.started for s in FakeServer.instances))
+
+    def test_resume_revalidates_and_skips_every_accepted_cell(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, _, _ = self.mocked_run(temp)
+            before = {
+                path: path.read_bytes()
+                for path in root.glob("input_*/c*/run_*/client_results.json")
+            }
+            result, client = self.mocked_resume(root)
+            self.assertEqual(result["accepted_runs"], 2)
+            self.assertEqual(result["skipped_accepted_runs"], 2)
+            self.assertTrue(result["resumed"])
+            client.assert_not_called()
+            self.assertEqual(before, {path: path.read_bytes() for path in before})
+
+    def test_resume_archives_only_incomplete_cell_and_reruns_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, _, _ = self.mocked_run(temp)
+            cells = sorted(root.glob("input_*/c*/run_*/context_metadata.json"))
+            interrupted = cells[0]
+            metadata = load_json(interrupted)
+            metadata["status"] = "starting"
+            interrupted.write_text(json.dumps(metadata))
+            accepted_result = cells[1].parent / "client_results.json"
+            accepted_before = accepted_result.read_bytes()
+
+            result, client = self.mocked_resume(root)
+
+            self.assertEqual(result["accepted_runs"], 2)
+            self.assertEqual(result["skipped_accepted_runs"], 1)
+            self.assertEqual(client.call_count, 3)
+            self.assertEqual(accepted_result.read_bytes(), accepted_before)
+            archives = list(root.glob("interrupted/input_*/c*/run_*/attempt_*"))
+            self.assertEqual(len(archives), 1)
+            self.assertTrue((archives[0] / "context_metadata.json").is_file())
+
+    def test_resume_rejects_changed_experiment_without_modifying_cells(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, _, _ = self.mocked_run(temp)
+            sentinel = root / "input_2048/c1/run_01/client_results.json"
+            before = sentinel.read_bytes()
+            sources = [
+                {
+                    "sample_id": f"sample-{i}",
+                    "source": "ruler",
+                    "task": "qa",
+                    "context": "Document.",
+                    "instruction": "Answer the question.",
+                }
+                for i in range(100)
+            ]
+            options = replace(
+                self.options,
+                output_dir=root,
+                lengths=(2048,),
+                concurrencies=(1, 4),
+                samples=5,
+                cooldown_seconds=0,
+                resume=True,
+            )
+            with patch(f"{MODULE}.load_sources", return_value=({}, sources, {})):
+                with self.assertRaisesRegex(BenchmarkError, "option samples"):
+                    run_context_scaling(self.config, options)
+            self.assertEqual(sentinel.read_bytes(), before)
+
+    def test_resume_rejects_corrupt_accepted_cell_without_archiving_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, _, _ = self.mocked_run(temp)
+            result_path = root / "input_2048/c1/run_01/client_results.json"
+            result = load_json(result_path)
+            result["server_reported_cached_prompt_tokens_total"] = 1
+            result_path.write_text(json.dumps(result))
+
+            with self.assertRaisesRegex(BenchmarkError, "cache reuse"):
+                self.mocked_resume(root)
+
+            self.assertTrue(result_path.is_file())
+            self.assertFalse((root / "interrupted/input_2048/c1/run_01").exists())
 
     def test_warmup_failure_stops_before_measurement_and_retains_status(self):
         with tempfile.TemporaryDirectory() as temp:

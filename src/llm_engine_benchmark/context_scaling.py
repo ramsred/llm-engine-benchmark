@@ -1,7 +1,8 @@
 """Isolated, fixed-length closed-loop characterization, not production capacity.
 
 Only reads the existing lock and canonical manifest. All derived data and runtime
-artifacts belong to a newly created output directory; there is no overwrite mode.
+artifacts belong to an owned output directory. Resume is fail-closed and never
+overwrites an accepted cell.
 """
 
 from __future__ import annotations
@@ -63,6 +64,7 @@ class ContextOptions:
     skip_image_pull: bool = False
     profile_nsys: bool = False
     dry_run: bool = False
+    resume: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,80 @@ class ContextCell:
     @property
     def relative_dir(self) -> Path:
         return Path(f"input_{self.input_tokens}/c{self.concurrency}/run_{self.repetition:02d}")
+
+
+CONTEXT_PROMPT_FORMAT_VERSION = 3
+CONTEXT_MEASUREMENT_PROTOCOL_VERSION = 1
+
+
+def _json_compatible(value):
+    """Return the representation used by JSON artifacts for stable comparisons."""
+    return json.loads(json.dumps(value, default=str))
+
+
+def _context_contract(
+    config: dict,
+    lock: dict,
+    hashes: dict,
+    plan: list[ContextCell],
+    options: ContextOptions,
+    root: Path,
+) -> dict:
+    return {
+        "source_sha256": hashes,
+        "lock": lock,
+        "config": redact_mapping(config),
+        "runs": [asdict(cell) for cell in plan],
+        "options": {
+            "output_dir": str(root),
+            "lengths": list(options.lengths),
+            "concurrencies": list(options.concurrencies),
+            "samples": options.samples,
+            "repetitions": options.repetitions,
+            "warmup_waves": options.warmup_waves,
+            "cooldown_seconds": options.cooldown_seconds,
+            "skip_image_pull": options.skip_image_pull,
+            "profile_nsys": options.profile_nsys,
+            "dry_run": False,
+        },
+        "scope": "context_characterization_no_quality_or_production_capacity_claim",
+        "context_prompt_format_version": CONTEXT_PROMPT_FORMAT_VERSION,
+        "context_measurement_protocol_version": CONTEXT_MEASUREMENT_PROTOCOL_VERSION,
+    }
+
+
+def _contract_signature(contract: dict) -> str:
+    serialized = json.dumps(
+        _json_compatible(contract), sort_keys=True, separators=(",", ":")
+    )
+    return sha256_text(serialized)
+
+
+def _validate_resume_contract(root: Path, expected: dict) -> dict:
+    plan_path = root / "context_plan.json"
+    if not plan_path.is_file():
+        raise BenchmarkError("Resume requires the original context_plan.json")
+    recorded = load_json(plan_path)
+    for key in ("source_sha256", "lock", "config", "runs", "scope"):
+        if _json_compatible(recorded.get(key)) != _json_compatible(expected[key]):
+            raise BenchmarkError(f"Resume experiment mismatch: {key}")
+    recorded_format = recorded.get("context_prompt_format_version")
+    if recorded_format != expected["context_prompt_format_version"]:
+        raise BenchmarkError("Resume experiment mismatch: context prompt format")
+    recorded_protocol = recorded.get(
+        "context_measurement_protocol_version", CONTEXT_MEASUREMENT_PROTOCOL_VERSION
+    )
+    if recorded_protocol != expected["context_measurement_protocol_version"]:
+        raise BenchmarkError("Resume experiment mismatch: measurement protocol")
+    recorded_options = recorded.get("options") or {}
+    for key, value in expected["options"].items():
+        if _json_compatible(recorded_options.get(key)) != _json_compatible(value):
+            raise BenchmarkError(f"Resume experiment mismatch: option {key}")
+    recorded_signature = recorded.get("experiment_signature")
+    expected_signature = _contract_signature(expected)
+    if recorded_signature is not None and recorded_signature != expected_signature:
+        raise BenchmarkError("Resume experiment signature mismatch")
+    return recorded
 
 
 def cell_config(config: dict, length: int) -> dict:
@@ -276,6 +352,106 @@ def observed_concurrency(timings: Path) -> int:
     return peak
 
 
+def validate_prepared_context(
+    root: Path,
+    tokenizer,
+    options: ContextOptions,
+    selected: list[dict],
+    warm_sources: list[dict],
+) -> None:
+    expected_measured_ids = [str(row["sample_id"]) for row in selected]
+    expected_warm_ids = [str(row["sample_id"]) for row in warm_sources]
+    for length in options.lengths:
+        directory = root / "prepared" / f"input_{length}"
+        measured_path = directory / "measured.jsonl"
+        warmup_path = directory / "warmup.jsonl"
+        validation_path = directory / "validation.json"
+        if not all(path.is_file() for path in (measured_path, warmup_path, validation_path)):
+            raise BenchmarkError(f"Resume prepared artifacts are incomplete for {length} tokens")
+        measured = list(read_jsonl(measured_path))
+        warmups = list(read_jsonl(warmup_path))
+        if [str(row["sample_id"]) for row in measured] != expected_measured_ids:
+            raise BenchmarkError(f"Resume measured sample IDs differ for {length} tokens")
+        if [str(row["sample_id"]) for row in warmups] != expected_warm_ids:
+            raise BenchmarkError(f"Resume warm-up sample IDs differ for {length} tokens")
+        checks = validate_prompt_set(tokenizer, measured + warmups, length)
+        if _json_compatible(load_json(validation_path)) != _json_compatible(checks):
+            raise BenchmarkError(f"Resume prompt validation differs for {length} tokens")
+
+
+def accepted_cell_is_valid(
+    root: Path,
+    cell: ContextCell,
+    options: ContextOptions,
+    image_digest: str,
+) -> bool:
+    run_dir = root / cell.relative_dir
+    if not run_dir.exists():
+        return False
+    metadata_path = run_dir / "context_metadata.json"
+    if not metadata_path.is_file():
+        return False
+    metadata = load_json(metadata_path)
+    if metadata.get("status") != "accepted":
+        return False
+    expected_metadata = {
+        "input_tokens": cell.input_tokens,
+        "concurrency": cell.concurrency,
+        "repetition": cell.repetition,
+        "profile_nsys": options.profile_nsys,
+        "context_prompt_format_version": CONTEXT_PROMPT_FORMAT_VERSION,
+        "image_digest": image_digest,
+        "warmup_waves": options.warmup_waves,
+        "warmup_requests_per_wave": cell.concurrency,
+    }
+    for key, value in expected_metadata.items():
+        if metadata.get(key) != value:
+            raise BenchmarkError(f"Accepted resume cell metadata mismatch: {cell} field {key}")
+    prepared = root / "prepared" / f"input_{cell.input_tokens}"
+    expected_hashes = {
+        "requests_sha256": sha256_file(prepared / "measured.jsonl"),
+        "warmup_sha256": sha256_file(prepared / "warmup.jsonl"),
+    }
+    for key, value in expected_hashes.items():
+        if metadata.get(key) != value:
+            raise BenchmarkError(f"Accepted resume cell input hash mismatch: {cell} field {key}")
+    result_path = run_dir / "client_results.json"
+    timings_path = run_dir / "request_timings.jsonl"
+    if not result_path.is_file() or not timings_path.is_file():
+        raise BenchmarkError(f"Accepted resume cell artifacts are incomplete: {cell}")
+    accept_result(load_json(result_path), options.samples)
+    if observed_concurrency(timings_path) != cell.concurrency:
+        raise BenchmarkError(f"Accepted resume cell concurrency evidence differs: {cell}")
+    peaks = metadata.get("warmup_client_peak_concurrency")
+    if peaks != [cell.concurrency] * options.warmup_waves:
+        raise BenchmarkError(f"Accepted resume cell warm-up evidence differs: {cell}")
+    for wave in range(options.warmup_waves):
+        wave_dir = run_dir / "warmup" / f"wave_{wave + 1:02d}"
+        result_path = wave_dir / "client_results.json"
+        timings_path = wave_dir / "request_timings.jsonl"
+        if not result_path.is_file() or not timings_path.is_file():
+            raise BenchmarkError(f"Accepted resume cell warm-up artifacts are incomplete: {cell}")
+        accept_result(load_json(result_path), cell.concurrency)
+        if observed_concurrency(timings_path) != cell.concurrency:
+            raise BenchmarkError(f"Accepted resume cell warm-up concurrency differs: {cell}")
+    if options.profile_nsys:
+        validation_path = run_dir / "profiling/cuda_trace_validation.json"
+        if not validation_path.is_file() or load_json(validation_path).get("valid") is not True:
+            raise BenchmarkError(f"Accepted resume cell CUDA validation is missing: {cell}")
+    return True
+
+
+def archive_incomplete_cell(root: Path, cell: ContextCell) -> Path | None:
+    run_dir = root / cell.relative_dir
+    if not run_dir.exists():
+        return None
+    attempt = f"attempt_{utc_now().replace(':', '').replace('+', '_')}_{uuid.uuid4().hex[:8]}"
+    destination = root / "interrupted" / cell.relative_dir / attempt
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    run_dir.rename(destination)
+    return destination
+
+
 def execute_cell(config, lock, tokenizer, cell, options, prepared, digest, root) -> dict:
     run_dir = root / cell.relative_dir
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -400,7 +576,15 @@ def execute_cell(config, lock, tokenizer, cell, options, prepared, digest, root)
                 atomic_write_json(run_dir / "context_metadata.json", metadata)
 
 
-def write_context_report(root: Path, plan: list[ContextCell], profiled: bool) -> dict:
+def write_context_report(
+    root: Path,
+    plan: list[ContextCell],
+    profiled: bool,
+    *,
+    resumed: bool = False,
+    skipped_runs: int = 0,
+    archived_attempts: list[str] | None = None,
+) -> dict:
     rows = []
     for cell in plan:
         run_dir = root / cell.relative_dir
@@ -462,6 +646,9 @@ def write_context_report(root: Path, plan: list[ContextCell], profiled: bool) ->
     summary = {
         "planned_runs": len(plan),
         "accepted_runs": sum(r["status"] == "accepted" for r in rows),
+        "resumed": resumed,
+        "skipped_accepted_runs": skipped_runs,
+        "archived_incomplete_attempts": archived_attempts or [],
         "finished_at": utc_now(),
         "report": str(root / "context_report.md"),
     }
@@ -480,10 +667,12 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
             "warmup_requests_per_cell": f"{options.warmup_waves} * concurrency",
         }
     root = options.output_dir.resolve()
-    if root.exists():
+    if root.exists() and not options.resume:
         raise BenchmarkError(
-            "Output directory already exists; choose a new directory (no overwrite)"
+            "Output directory already exists; choose a new directory or use --resume"
         )
+    if options.resume and not root.is_dir():
+        raise BenchmarkError("Resume requires an existing results directory")
     for protected in (
         Path(config["paths"]["data_dir"]),
         PROJECT_ROOT / "src",
@@ -495,17 +684,11 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
                 "Output directory must not be inside canonical data or source code"
             )
     lock, sources, hashes = load_sources(config)
-    assert_idle(config)
-    root.mkdir(parents=True, exist_ok=False)
+    contract = _context_contract(config, lock, hashes, plan, options, root)
     payload = {
         "created_at": utc_now(),
-        "source_sha256": hashes,
-        "lock": lock,
-        "config": redact_mapping(config),
-        "runs": [asdict(cell) for cell in plan],
-        "options": {**asdict(options), "output_dir": str(root)},
-        "scope": "context_characterization_no_quality_or_production_capacity_claim",
-        "context_prompt_format_version": 3,
+        **contract,
+        "experiment_signature": _contract_signature(contract),
     }
     try:
         payload["git_commit"] = subprocess.check_output(
@@ -518,12 +701,35 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
         )
     except (OSError, subprocess.SubprocessError):
         payload["git_commit"] = "unavailable"
-    payload["implementation_sha256"] = {
+    implementation_sha256 = {
         p.name: sha256_file(p) for p in sorted(Path(__file__).parent.glob("*.py"))
     }
-    atomic_write_json(root / "context_plan.json", payload)
+    payload["implementation_sha256"] = implementation_sha256
+    if options.resume:
+        recorded = _validate_resume_contract(root, contract)
+        history = list(recorded.get("resume_history") or [])
+        history.append(
+            {
+                "resumed_at": utc_now(),
+                "git_commit": payload.get("git_commit", "unavailable"),
+                "git_dirty": payload.get("git_dirty"),
+                "implementation_sha256": implementation_sha256,
+            }
+        )
+        recorded["resume_history"] = history
+        recorded.setdefault(
+            "context_measurement_protocol_version", CONTEXT_MEASUREMENT_PROTOCOL_VERSION
+        )
+        recorded.setdefault("experiment_signature", _contract_signature(contract))
+        atomic_write_json(root / "context_plan.json", recorded)
+    else:
+        root.mkdir(parents=True, exist_ok=False)
+        atomic_write_json(root / "context_plan.json", payload)
+    skipped_runs = 0
+    archived_attempts: list[str] = []
     try:
-        capture_environment(config, lock, root)
+        if not options.resume:
+            capture_environment(config, lock, root)
         tokenizer = load_pinned_tokenizer(config, lock)
         selected = select_stratified_records(sources, options.samples)
         warm_sources = [
@@ -538,30 +744,69 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
             for wave in range(options.warmup_waves)
             for i in range(max(options.concurrencies))
         ]
-        for length in options.lengths:
-            derived = cell_config(config, length)
-            # One allocation covers ALL prompts sharing a server, including all
-            # warm-up waves. Independent allocations could reuse starting tokens.
-            combined = build_context_records(derived, tokenizer, selected + warm_sources)
-            measured = combined[: len(selected)]
-            warmups = combined[len(selected) :]
-            checks = validate_prompt_set(tokenizer, measured + warmups, length)
-            directory = root / "prepared" / f"input_{length}"
-            directory.mkdir(parents=True)
-            write_jsonl(directory / "measured.jsonl", measured)
-            write_jsonl(directory / "warmup.jsonl", warmups)
-            atomic_write_json(directory / "validation.json", checks)
-        image_server = DockerEngineServer(
-            engine="tensorrt_llm",
-            config=config,
-            lock=lock,
-            run_dir=root / "image",
-            skip_image_pull=options.skip_image_pull,
-        )
-        digest = image_server.prepare_image()
-        atomic_write_json(root / "image_identity.json", {"image_digest": digest})
+        if options.resume:
+            validate_prepared_context(root, tokenizer, options, selected, warm_sources)
+            identity_path = root / "image_identity.json"
+            if not identity_path.is_file():
+                raise BenchmarkError("Resume image identity is missing")
+            digest = str(load_json(identity_path).get("image_digest") or "")
+            if not digest:
+                raise BenchmarkError("Resume image digest is missing")
+        else:
+            for length in options.lengths:
+                derived = cell_config(config, length)
+                # One allocation covers ALL prompts sharing a server, including all
+                # warm-up waves. Independent allocations could reuse starting tokens.
+                combined = build_context_records(derived, tokenizer, selected + warm_sources)
+                measured = combined[: len(selected)]
+                warmups = combined[len(selected) :]
+                checks = validate_prompt_set(tokenizer, measured + warmups, length)
+                directory = root / "prepared" / f"input_{length}"
+                directory.mkdir(parents=True)
+                write_jsonl(directory / "measured.jsonl", measured)
+                write_jsonl(directory / "warmup.jsonl", warmups)
+                atomic_write_json(directory / "validation.json", checks)
+            assert_idle(config)
+            image_server = DockerEngineServer(
+                engine="tensorrt_llm",
+                config=config,
+                lock=lock,
+                run_dir=root / "image",
+                skip_image_pull=options.skip_image_pull,
+            )
+            digest = image_server.prepare_image()
+            atomic_write_json(root / "image_identity.json", {"image_digest": digest})
+
+        pending: list[ContextCell] = []
+        for cell in plan:
+            if options.resume and accepted_cell_is_valid(root, cell, options, digest):
+                skipped_runs += 1
+                continue
+            pending.append(cell)
+        if options.resume and pending:
+            assert_idle(config)
+        if options.resume and pending:
+            image_server = DockerEngineServer(
+                engine="tensorrt_llm",
+                config=config,
+                lock=lock,
+                run_dir=root / "image-resume",
+                skip_image_pull=options.skip_image_pull,
+            )
+            current_digest = image_server.prepare_image()
+            if current_digest != digest:
+                raise BenchmarkError(
+                    f"Resume image digest mismatch: {current_digest} != {digest}"
+                )
         for index, cell in enumerate(plan):
             print(f"[context] {index + 1:02d}/{len(plan):02d} {cell}", flush=True)
+            if cell not in pending:
+                print(f"[context] skipping accepted cell {cell}", flush=True)
+                continue
+            archived = archive_incomplete_cell(root, cell)
+            if archived is not None:
+                archived_attempts.append(str(archived.relative_to(root)))
+                print(f"[context] archived incomplete attempt at {archived}", flush=True)
             execute_cell(
                 config,
                 lock,
@@ -572,7 +817,7 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
                 digest,
                 root,
             )
-            if index + 1 < len(plan):
+            if any(candidate in pending for candidate in plan[index + 1 :]):
                 time.sleep(options.cooldown_seconds)
     except BaseException as exc:
         atomic_write_json(
@@ -584,7 +829,14 @@ def run_context_scaling(config: dict, options: ContextOptions) -> dict:
         )
         raise
     finally:
-        write_context_report(root, plan, options.profile_nsys)
+        write_context_report(
+            root,
+            plan,
+            options.profile_nsys,
+            resumed=options.resume,
+            skipped_runs=skipped_runs,
+            archived_attempts=archived_attempts,
+        )
         artifacts = {
             str(p.relative_to(root)): sha256_file(p)
             for p in sorted(root.rglob("*"))
@@ -622,6 +874,7 @@ def main(argv=None) -> int:
     parser.add_argument("--cooldown-seconds", type=float, default=60.0)
     parser.add_argument("--skip-image-pull", action="store_true")
     parser.add_argument("--profile-nsys", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -638,6 +891,7 @@ def main(argv=None) -> int:
                 skip_image_pull=args.skip_image_pull,
                 profile_nsys=args.profile_nsys,
                 dry_run=args.dry_run,
+                resume=args.resume,
             ),
         )
     except (BenchmarkError, OSError, ValueError, subprocess.SubprocessError) as exc:

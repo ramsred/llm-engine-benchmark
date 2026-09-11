@@ -117,6 +117,8 @@ accepted run JSON + request timings
 - [Prefill-budget case study](docs/prefill-budget-case-study.md)
 - [SLA-constrained capacity runbook](docs/capacity.md)
 - [Context-length characterization runbook](docs/context-scaling.md)
+- Context campaigns support immutable-contract resume and compatible multi-source
+  consolidation through `scripts/analyze_context_scaling.py`.
 - [Fairness and limitations](docs/fairness-and-limitations.md)
 - [Production recommendations](docs/production-recommendations.md)
 - [Reproducibility and implementation details](docs/reproducibility.md)

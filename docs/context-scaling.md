@@ -51,9 +51,13 @@ filter the timeline before attributing activity to the measurement interval.
   stop execution without killing another workload. This is a preflight check, not
   a reservation against unrelated applications starting later.
 - Containers use unique names. Existing benchmark containers are never removed.
-- The results directory must not exist. There is deliberately no overwrite/resume
-  option in this initial workflow. Failures stop the sweep and retain artifacts.
-  Rerun only the affected length/concurrency in a **new** output directory.
+- The results directory must not exist for a new campaign. There is no overwrite
+  option. `--resume` accepts only an existing campaign whose source hashes, lock,
+  resolved configuration, plan, prompt format, measurement protocol and immutable
+  options match. Every accepted cell is revalidated from its metadata, request
+  counts, zero-cache evidence, prepared-input hashes and observed concurrency.
+  Accepted cells are never overwritten. An incomplete cell is moved intact under
+  `interrupted/` before the same planned cell is attempted again.
 - Model/runtime caches remain shared as in the existing server wrapper; they may
   be populated by the engine. Existing benchmark result files are not modified.
 
@@ -89,6 +93,23 @@ token usage, run all eight discovery cells in a tmux session:
   --skip-image-pull
 ```
 
+If the controlling process is interrupted, first stop only the uniquely named
+orphan container recorded for that cell and verify that no benchmark process is
+active. Resume with the identical experimental arguments plus `--resume`:
+
+```bash
+.venv/bin/python -u scripts/run_context_scaling.py \
+  --samples 20 --repetitions 1 \
+  --results-dir results/context-scaling/discovery-01 \
+  --skip-image-pull --resume
+```
+
+Changing lengths, concurrencies, sample count, repetitions, warm-up, profiling,
+cooldown, image-pull policy, source data, lock or configuration rejects resume.
+The runner records resume history and archived attempts in the experiment artifacts.
+It does not remove containers automatically because ownership must be checked by the
+operator after abrupt process termination.
+
 Confirm the matrix in another fresh directory:
 
 ```bash
@@ -116,6 +137,28 @@ Optional targeted profiling, **separate** from primary latency results:
 before comparing studies. All lengths must fit input + output within the fixed
 server context ceiling; invalid options fail before workload execution.
 
+## Consolidating discovery or validation campaigns
+
+Recovery cells may be collected in new output directories when they predate resume
+support. Consolidate compatible, non-overlapping sources without copying raw data:
+
+```bash
+.venv/bin/python scripts/analyze_context_scaling.py \
+  --source results/context-scaling/discovery-01 \
+  --source results/context-scaling/discovery-01-recovery-120k-c1 \
+  --source results/context-scaling/discovery-01-recovery-32k-c4 \
+  --repetitions 1 \
+  --output-dir results/summaries
+```
+
+The analyzer requires matching source hashes, lock, resolved configuration, image
+digest, sample count, warm-up policy, prompt format and measurement protocol. It
+rejects duplicate accepted cells and measured-prompt hash differences. Its CSV
+retains each run; Markdown reports per-cell summaries and C4/C1 ratios; provenance
+hashes every consumed plan, metadata, result and request-timing file. Missing cells
+produce `incomplete`, one complete repetition produces `complete_discovery`, and at
+least three complete repetitions produce `complete_repeated_validation`.
+
 ## Evidence and interpretation
 
 Each experiment contains a plan, pinned source hashes, code hashes and Git identity,
@@ -136,9 +179,9 @@ production admission-queue measurement.
 
 Only cells accepted after measurement, cleanup and optional CUDA trace validation
 enter numeric summaries. Failed and unrun cells remain visible. Whole-process
-termination (SIGKILL, power loss) may prevent final reports or cleanup; inspect the
-uniquely named container and recorded plan before manually recovering. Do not
-delete or overwrite the interrupted evidence directory.
+termination (SIGKILL, power loss) may prevent final reports or cleanup; inspect and
+stop only the uniquely named container before using `--resume`. The runner preserves
+the interrupted evidence directory rather than deleting it.
 
 The next phase adds workload mixtures, arrival-rate sweeps, cache-locality scenarios
 and per-class SLOs using the capacity harness. It is intentionally outside this runner.
