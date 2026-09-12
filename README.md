@@ -145,7 +145,7 @@ The repository excludes model weights, Hugging Face caches, TensorRT engines, se
 - [x] Nsight Systems capture integration
 - [x] Profiler-backed root cause for the TensorRT-LLM cold-C4 ITL anomaly
 - [ ] TensorRT-LLM through Triton
-- [ ] Context scaling: 8K, 32K, 64K, 120K ([isolated workflow implemented](docs/context-scaling.md); GPU validation pending)
+- [x] Context scaling: 8K, 32K, 64K, 120K ([three-repetition validation](results/summaries/tensorrt-llm-context-scaling-analysis.md))
 - [x] SLA-constrained throughput with [validated production capacity evidence](results/summaries/tensorrt-llm-capacity-analysis.md)
 
 ## Authorship and citation
